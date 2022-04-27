@@ -7,7 +7,7 @@ use bytes::Bytes;
 use creep::Context;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
-use overlord::types::{Node, OverlordMsg, Status};
+use mlm::types::{MlmMsg, Node, Status};
 
 use super::primitive::{Block, Channel, Participant};
 use super::utils::{get_max_alive_height, timer_config, to_hex, to_hex_strings};
@@ -15,9 +15,16 @@ use super::wal::{Record, RECORD_TMP_FILE};
 
 pub async fn run_test(records: Record, refresh_height: u64, test_height: u64) {
     let interval = records.interval;
-    let start_height = get_max_alive_height(&records.height_record, &records.node_record);
-    println!("Test start with {:?} nodes，interval of {:?} ms, refresh every {:?} height, begin with {:?} height and terminate after {:?} height",
-             records.node_record.len(), interval, refresh_height, start_height, test_height);
+    let start_height =
+        get_max_alive_height(&records.height_record, &records.node_record);
+    println!(
+        "Test start with {:?} nodes，interval of {:?} ms, refresh every {:?} height, begin with {:?} height and terminate after {:?} height",
+        records.node_record.len(),
+        interval,
+        refresh_height,
+        start_height,
+        test_height
+    );
 
     let mut test_id = 0;
     let mut alive_nodes = { records.alive_record.lock().unwrap().clone() };
@@ -77,13 +84,13 @@ pub async fn run_test(records: Record, refresh_height: u64, test_height: u64) {
 fn run_alive_nodes(
     records: &Record,
     alive_nodes: Vec<Node>,
-) -> (Vec<Arc<Participant>>, Vec<Sender<OverlordMsg<Block>>>) {
+) -> (Vec<Arc<Participant>>, Vec<Sender<MlmMsg<Block>>>) {
     let records = records.as_internal();
     let interval = records.interval;
     let alive_num = alive_nodes.len();
 
     let channels: Vec<Channel> = (0..alive_num).map(|_| unbounded()).collect();
-    let hearings: HashMap<Bytes, Receiver<OverlordMsg<Block>>> = alive_nodes
+    let hearings: HashMap<Bytes, Receiver<MlmMsg<Block>>> = alive_nodes
         .iter()
         .map(|node| node.address.clone())
         .zip(channels.iter().map(|(_, receiver)| receiver.clone()))
@@ -92,7 +99,7 @@ fn run_alive_nodes(
     let mut alive_handlers = Vec::new();
     for node in alive_nodes.iter() {
         let address = node.address.clone();
-        let mut talk_to: HashMap<Bytes, Sender<OverlordMsg<Block>>> = alive_nodes
+        let mut talk_to: HashMap<Bytes, Sender<MlmMsg<Block>>> = alive_nodes
             .iter()
             .map(|node| node.address.clone())
             .zip(channels.iter().map(|(sender, _)| sender.clone()))
@@ -148,7 +155,7 @@ fn synchronize_height(
                         );
                         let _ = node.handler.send_msg(
                             Context::new(),
-                            OverlordMsg::RichStatus(Status {
+                            MlmMsg::RichStatus(Status {
                                 height: max_height + 1,
                                 interval: Some(interval),
                                 timer_config: timer_config(),
@@ -163,14 +170,12 @@ fn synchronize_height(
 
 fn kill_alive_nodes(
     alive_handlers: Vec<Arc<Participant>>,
-    senders: Vec<Sender<OverlordMsg<Block>>>,
+    senders: Vec<Sender<MlmMsg<Block>>>,
 ) {
-    alive_handlers.iter().for_each(|node| {
-        node.handler
-            .send_msg(Context::new(), OverlordMsg::Stop)
-            .unwrap()
-    });
+    alive_handlers
+        .iter()
+        .for_each(|node| node.handler.send_msg(Context::new(), MlmMsg::Stop).unwrap());
     senders
         .iter()
-        .for_each(|sender| sender.send(OverlordMsg::Stop).unwrap());
+        .for_each(|sender| sender.send(MlmMsg::Stop).unwrap());
 }

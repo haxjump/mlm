@@ -4,7 +4,7 @@ use std::error::Error;
 
 use derive_more::Display;
 
-/// Overlord consensus error.
+/// Mlm consensus error.
 #[derive(Clone, Debug, Display)]
 pub enum ConsensusError {
     ///
@@ -90,8 +90,9 @@ impl Error for ConsensusError {}
 impl PartialEq for ConsensusError {
     fn eq(&self, other: &Self) -> bool {
         use self::ConsensusError::{
-            CorrectnessErr, InvalidAddress, MonitorEventErr, Other, PrecommitErr, PrevoteErr,
-            ProposalErr, RoundDiff, SelfCheckErr, ThrowEventErr, TriggerSMRErr,
+            CorrectnessErr, InvalidAddress, MonitorEventErr, Other, PrecommitErr,
+            PrevoteErr, ProposalErr, RoundDiff, SelfCheckErr, ThrowEventErr,
+            TriggerSMRErr,
         };
         match (self, other) {
             // If compare objects are the following types of error, as long as the error type need
@@ -106,7 +107,9 @@ impl PartialEq for ConsensusError {
             | (SelfCheckErr(_), SelfCheckErr(_)) => true,
             // If it is the following two types of errors, in the judgment, the error type need the
             // same, and the error information need the same.
-            (RoundDiff { local: m, vote: n }, RoundDiff { local: p, vote: q }) => m == p && n == q,
+            (RoundDiff { local: m, vote: n }, RoundDiff { local: p, vote: q }) => {
+                m == p && n == q
+            }
             (Other(x), Other(y)) | (CorrectnessErr(x), CorrectnessErr(y)) => x == y,
             _ => false,
         }

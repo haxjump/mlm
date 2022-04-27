@@ -4,8 +4,8 @@ use creep::Context;
 use hummer::coding::hex_encode;
 
 use crate::types::{
-    Address, AggregatedChoke, AggregatedVote, Hash, SignedChoke, SignedProposal, SignedVote,
-    VoteType,
+    Address, AggregatedChoke, AggregatedVote, Hash, SignedChoke, SignedProposal,
+    SignedVote, VoteType,
 };
 use crate::{error::ConsensusError, Codec, ConsensusResult};
 
@@ -41,7 +41,11 @@ where
 
     /// Get the signed proposal of the given height and round. Return `Err` when there is no
     /// signed proposal. Return `Err` when can not get it.
-    pub fn get(&self, height: u64, round: u64) -> ConsensusResult<(SignedProposal<T>, Context)> {
+    pub fn get(
+        &self,
+        height: u64,
+        round: u64,
+    ) -> ConsensusResult<(SignedProposal<T>, Context)> {
         if let Some(round_collector) = self.0.get(&height) {
             return Ok(round_collector
                 .get(round)
@@ -125,7 +129,13 @@ impl VoteCollector {
     }
 
     /// Insert a vote to the collector.
-    pub fn insert_vote(&mut self, ctx: Context, hash: Hash, vote: SignedVote, addr: Address) {
+    pub fn insert_vote(
+        &mut self,
+        ctx: Context,
+        hash: Hash,
+        vote: SignedVote,
+        addr: Address,
+    ) {
         self.0
             .entry(vote.get_height())
             .or_insert_with(VoteRoundCollector::new)
@@ -258,7 +268,13 @@ impl VoteRoundCollector {
         }
     }
 
-    fn insert_vote(&mut self, ctx: Context, hash: Hash, vote: SignedVote, addr: Address) {
+    fn insert_vote(
+        &mut self,
+        ctx: Context,
+        hash: Hash,
+        vote: SignedVote,
+        addr: Address,
+    ) {
         self.general
             .entry(vote.get_round())
             .or_insert_with(RoundCollector::new)
@@ -340,7 +356,13 @@ impl RoundCollector {
         }
     }
 
-    fn insert_vote(&mut self, ctx: Context, hash: Hash, vote: SignedVote, addr: Address) {
+    fn insert_vote(
+        &mut self,
+        ctx: Context,
+        hash: Hash,
+        vote: SignedVote,
+        addr: Address,
+    ) {
         if vote.is_prevote() {
             self.prevote.insert(ctx, hash, addr, vote);
         } else {
@@ -448,8 +470,11 @@ impl Votes {
             let exist = self.by_address.get(&addr).unwrap().clone();
             if vote.vote.block_hash != exist.0.vote.block_hash {
                 // this is a byzantine behaviour
-                log::error!("Overlord: VoteCollector detects byzantine behaviour: existing: {:?}, signed vote inserting: {:?}",
-                exist,vote);
+                log::error!(
+                    "Mlm: VoteCollector detects byzantine behaviour: existing: {:?}, signed vote inserting: {:?}",
+                    exist,
+                    vote
+                );
             }
             return;
         }
@@ -531,13 +556,13 @@ impl ChokeCollector {
         if let Some(map) = self.chokes.get(&round) {
             let voters = map.keys().map(hex_encode).collect::<Vec<_>>();
             log::info!(
-                "Overlord: {} chokes in round {}, voters {:?}",
+                "Mlm: {} chokes in round {}, voters {:?}",
                 map.len(),
                 round,
                 voters
             );
         } else {
-            log::info!("Overlord: no choke in round {}", round);
+            log::info!("Mlm: no choke in round {}", round);
         }
     }
 
@@ -560,8 +585,8 @@ mod test {
 
     use crate::state::collection::{ProposalCollector, VoteCollector};
     use crate::types::{
-        Address, AggregatedSignature, AggregatedVote, Hash, Proposal, Signature, SignedProposal,
-        SignedVote, Vote, VoteType,
+        Address, AggregatedSignature, AggregatedVote, Hash, Proposal, Signature,
+        SignedProposal, SignedVote, Vote, VoteType,
     };
     use crate::Codec;
 
@@ -578,7 +603,8 @@ mod test {
         }
 
         fn decode(data: Bytes) -> Result<Self, Box<dyn Error + Send>> {
-            let decode: Pill = deserialize(data.as_ref()).expect("Deserialize Pill error.");
+            let decode: Pill =
+                deserialize(data.as_ref()).expect("Deserialize Pill error.");
             Ok(decode)
         }
     }
@@ -606,7 +632,9 @@ mod test {
     fn _gen_aggr_signature() -> AggregatedSignature {
         AggregatedSignature {
             signature: gen_signature(),
-            address_bitmap: Bytes::from((0..8).map(|_| random::<u8>()).collect::<Vec<_>>()),
+            address_bitmap: Bytes::from(
+                (0..8).map(|_| random::<u8>()).collect::<Vec<_>>(),
+            ),
         }
     }
 
@@ -648,7 +676,11 @@ mod test {
         }
     }
 
-    fn _gen_aggregated_vote(height: u64, round: u64, vote_type: VoteType) -> AggregatedVote {
+    fn _gen_aggregated_vote(
+        height: u64,
+        round: u64,
+        vote_type: VoteType,
+    ) -> AggregatedVote {
         let signature = _gen_aggr_signature();
 
         AggregatedVote {
@@ -667,21 +699,27 @@ mod test {
         let proposal_01 = gen_signed_proposal(1, 0);
         let proposal_02 = gen_signed_proposal(1, 0);
 
-        assert!(proposals
-            .insert(Context::new(), 1, 0, proposal_01.clone())
-            .is_ok());
+        assert!(
+            proposals
+                .insert(Context::new(), 1, 0, proposal_01.clone())
+                .is_ok()
+        );
         assert!(proposals.insert(Context::new(), 1, 0, proposal_02).is_err());
         assert_eq!(proposals.get(1, 0).unwrap().0, proposal_01);
 
         let proposal_03 = gen_signed_proposal(2, 0);
         let proposal_04 = gen_signed_proposal(3, 0);
 
-        assert!(proposals
-            .insert(Context::new(), 2, 0, proposal_03.clone())
-            .is_ok());
-        assert!(proposals
-            .insert(Context::new(), 3, 0, proposal_04.clone())
-            .is_ok());
+        assert!(
+            proposals
+                .insert(Context::new(), 2, 0, proposal_03.clone())
+                .is_ok()
+        );
+        assert!(
+            proposals
+                .insert(Context::new(), 3, 0, proposal_04.clone())
+                .is_ok()
+        );
 
         proposals.flush(2);
         assert!(proposals.get(1, 0).is_err());
@@ -741,9 +779,11 @@ mod test {
             vec
         );
         assert!(votes.get_vote_map(1, 0, VoteType::Precommit).is_err());
-        assert!(votes
-            .get_votes(1, 0, VoteType::Precommit, &hash_01)
-            .is_err());
+        assert!(
+            votes
+                .get_votes(1, 0, VoteType::Precommit, &hash_01)
+                .is_err()
+        );
         assert!(votes.get_vote_map(1, 1, VoteType::Prevote).is_err());
         assert!(votes.get_votes(1, 1, VoteType::Prevote, &hash_01).is_err());
         assert!(votes.get_votes(1, 0, VoteType::Prevote, &hash_02).is_err());

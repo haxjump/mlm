@@ -5,22 +5,22 @@ use creep::Context;
 use futures::channel::mpsc::UnboundedSender;
 use muta_apm::derive::tracing_span;
 
-use crate::types::{Address, AggregatedVote, OverlordMsg};
+use crate::types::{Address, AggregatedVote, MlmMsg};
 use crate::utils::auth_manage::AuthorityManage;
 use crate::{Codec, ConsensusResult, Crypto};
 
-#[tracing_span(kind = "overlord.vreify_sig_pool")]
+#[tracing_span(kind = "mlm.vreify_sig_pool")]
 pub async fn parallel_verify<T: Codec + 'static, C: Crypto + Sync + 'static>(
     ctx: Context,
-    msg: OverlordMsg<T>,
+    msg: MlmMsg<T>,
     crypto: Arc<C>,
     authority: AuthorityManage,
-    tx: UnboundedSender<(Context, OverlordMsg<T>)>,
+    tx: UnboundedSender<(Context, MlmMsg<T>)>,
 ) {
     let msg_clone = msg.clone();
     tokio::spawn(async move {
         match msg {
-            OverlordMsg::SignedProposal(sp) => {
+            MlmMsg::SignedProposal(sp) => {
                 let hash = crypto.hash(Bytes::from(rlp::encode(&sp.proposal)));
                 if let Err(err) = crypto.verify_signature(
                     sp.signature.clone(),
@@ -28,7 +28,7 @@ pub async fn parallel_verify<T: Codec + 'static, C: Crypto + Sync + 'static>(
                     sp.proposal.proposer.clone(),
                 ) {
                     log::error!(
-                        "Overlord: verify {:?} proposal signature failed {:?}",
+                        "Mlm: verify {:?} proposal signature failed {:?}",
                         sp,
                         err
                     );
@@ -49,14 +49,14 @@ pub async fn parallel_verify<T: Codec + 'static, C: Crypto + Sync + 'static>(
                 }
             }
 
-            OverlordMsg::SignedVote(sv) => {
+            MlmMsg::SignedVote(sv) => {
                 let hash = crypto.hash(Bytes::from(rlp::encode(&sv.vote)));
                 crypto
                     .verify_signature(sv.signature.clone(), hash, sv.voter.clone())
                     .map_or_else(
                         |err| {
                             log::error!(
-                                "Overlord: verify {:?} vote signature failed {:?}",
+                                "Mlm: verify {:?} vote signature failed {:?}",
                                 sv,
                                 err
                             );
@@ -67,18 +67,18 @@ pub async fn parallel_verify<T: Codec + 'static, C: Crypto + Sync + 'static>(
                     );
             }
 
-            OverlordMsg::AggregatedVote(qc) => {
+            MlmMsg::AggregatedVote(qc) => {
                 verify_qc(ctx, crypto, qc, authority, tx, msg_clone);
             }
 
-            OverlordMsg::SignedChoke(sc) => {
+            MlmMsg::SignedChoke(sc) => {
                 let hash = crypto.hash(Bytes::from(rlp::encode(&sc.choke.to_hash())));
                 crypto
                     .verify_signature(sc.signature.clone(), hash, sc.address.clone())
                     .map_or_else(
                         |err| {
                             log::error!(
-                                "Overlord: verify {:?} choke signature failed {:?}",
+                                "Mlm: verify {:?} choke signature failed {:?}",
                                 sc,
                                 err
                             );
@@ -107,8 +107,8 @@ fn verify_qc<T: Codec, C: Crypto>(
     crypto: Arc<C>,
     qc: AggregatedVote,
     authority: AuthorityManage,
-    tx: UnboundedSender<(Context, OverlordMsg<T>)>,
-    msg_clone: OverlordMsg<T>,
+    tx: UnboundedSender<(Context, MlmMsg<T>)>,
+    msg_clone: MlmMsg<T>,
 ) {
     let hash = crypto.hash(Bytes::from(rlp::encode(&qc.to_vote())));
     if let Ok(voters) = get_voters(&qc.signature.address_bitmap, authority) {
@@ -117,7 +117,7 @@ fn verify_qc<T: Codec, C: Crypto>(
             .map_or_else(
                 |err| {
                     log::error!(
-                        "Overlord: verify {:?} aggregated signature error {:?}",
+                        "Mlm: verify {:?} aggregated signature error {:?}",
                         qc,
                         err
                     );

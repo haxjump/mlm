@@ -1,4 +1,4 @@
-# Overlord 数据结构
+# Mlm 数据结构
 
 ## 类型
 
@@ -23,7 +23,7 @@ pub enum VoteType {
     Precommit = 1,
 }
 
-pub enum OverlordMsg {
+pub enum MlmMsg {
     SignedProposal(SignedProposal),
     SignedVote(SignedVote),
     AggregatedVote(AggregatedVote),

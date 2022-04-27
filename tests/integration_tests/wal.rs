@@ -10,8 +10,8 @@ use lru_cache::LruCache;
 use rlp::Encodable;
 use serde::{Deserialize, Serialize};
 
-use overlord::types::Node;
-use overlord::{Wal, WalInfo};
+use mlm::types::Node;
+use mlm::{Wal, WalInfo};
 
 use super::primitive::Block;
 use super::utils::{create_alive_nodes, gen_random_bytes};
@@ -80,7 +80,8 @@ pub struct Record {
 impl Record {
     pub fn new(num: usize, interval: u64) -> Record {
         let test_id = Arc::new(Mutex::new(0));
-        let node_record: Vec<Node> = (0..num).map(|_| Node::new(gen_random_bytes())).collect();
+        let node_record: Vec<Node> =
+            (0..num).map(|_| Node::new(gen_random_bytes())).collect();
         let alive_record = Mutex::new(create_alive_nodes(node_record.clone()));
         let wal_record: HashMap<Bytes, MockWal> = (0..num)
             .map(|i| {
@@ -189,8 +190,10 @@ impl Record {
                 )
             })
             .collect();
-        let commit_record = Arc::<Mutex<LruCache<u64, Bytes>>>::clone(&self.commit_record);
-        let height_record = Arc::<Mutex<HashMap<Bytes, u64>>>::clone(&self.height_record);
+        let commit_record =
+            Arc::<Mutex<LruCache<u64, Bytes>>>::clone(&self.commit_record);
+        let height_record =
+            Arc::<Mutex<HashMap<Bytes, u64>>>::clone(&self.height_record);
         let interval = self.interval;
 
         RecordInternal {
@@ -285,15 +288,15 @@ impl RecordInternal {
 
 #[derive(Serialize, Deserialize)]
 struct TupleWalRecord(
-    #[serde(with = "overlord::serde_hex")] Bytes,
+    #[serde(with = "mlm::serde_hex")] Bytes,
     Option<WalInfo<Block>>,
 );
 
 #[derive(Serialize, Deserialize, Clone)]
-struct TupleCommitRecord(u64, #[serde(with = "overlord::serde_hex")] Bytes);
+struct TupleCommitRecord(u64, #[serde(with = "mlm::serde_hex")] Bytes);
 
 #[derive(Serialize, Deserialize, Clone)]
-struct TupleHeightRecord(#[serde(with = "overlord::serde_hex")] Bytes, u64);
+struct TupleHeightRecord(#[serde(with = "mlm::serde_hex")] Bytes, u64);
 
 #[derive(Serialize, Deserialize)]
 struct RecordForWal {

@@ -1,5 +1,3 @@
-ERBOSE := $(if ${CI},--verbose,)
-
 ifneq ("$(wildcard /usr/lib/librocksdb.so)","")
 	SYS_LIB_DIR := /usr/lib
 else ifneq ("$(wildcard /usr/lib64/librocksdb.so)","")
@@ -13,36 +11,31 @@ SYS_ROCKSDB := $(if ${USE_SYS_ROCKSDB},ROCKSDB_LIB_DIR=${SYS_LIB_DIR},)
 CARGO := env ${SYS_ROCKSDB} cargo
 
 test:
-	${CARGO} test ${VERBOSE} --all -- --nocapture | grep -v TracePoint
+	${CARGO} test -- --nocapture | grep -v TracePoint
 
 doc:
-	cargo doc --all --no-deps
+	cargo doc --no-deps
 
 doc-deps:
-	cargo doc --all
+	cargo doc
 
 check:
-	${CARGO} check ${VERBOSE} --all
+	${CARGO} check
 
 build:
-	${CARGO} build ${VERBOSE} --release
+	${CARGO} build --release
 
 prod:
-	${CARGO} build ${VERBOSE} --release
+	${CARGO} build --release
 
 prod-test:
-	${CARGO} test ${VERBOSE} --all -- --nocapture
+	${CARGO} test -- --nocapture
 
 fmt:
-	cargo fmt ${VERBOSE} --all -- --check
+	cargo +nightly fmt
 
-clippy:
-	${CARGO} clippy ${VERBOSE} --all --all-targets --all-features -- \
-		-D warnings -D clippy::clone_on_ref_ptr -D clippy::enum_glob_use
-
-
-ci: fmt clippy test
-	git diff --exit-code Cargo.lock
+lint:
+	${CARGO} clippy-targets-features
 
 info:
 	date
@@ -59,7 +52,3 @@ stats:
 security-audit:
 	@cargo audit --version || cargo install cargo-audit
 	@cargo audit
-
-.PHONY: build prod prod-test
-.PHONY: fmt test clippy doc doc-deps check stats
-.PHONY: ci info security-audit

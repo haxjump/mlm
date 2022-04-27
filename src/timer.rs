@@ -17,7 +17,7 @@ use crate::{types::Hash, utils::timer_config::TimerConfig};
 
 const MAX_TIMEOUT_COEF: u32 = 5;
 
-/// Overlord timer used futures timer which is powered by a timer heap. When monitor a SMR event,
+/// Mlm timer used futures timer which is powered by a timer heap. When monitor a SMR event,
 /// timer will get timeout interval from timer config, then set a delay. When the timeout expires,
 #[derive(Debug)]
 pub struct Timer {
@@ -34,7 +34,10 @@ pub struct Timer {
 impl Stream for Timer {
     type Item = ConsensusError;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Self::Item>> {
         loop {
             let mut is_pending = match self.event.poll_next_unpin(cx) {
                 Poll::Pending => true,
@@ -108,7 +111,7 @@ impl Timer {
     pub fn run(mut self) {
         tokio::spawn(async move {
             while let Some(err) = self.next().await {
-                error!("Overlord: timer error {:?}", err);
+                error!("Mlm: timer error {:?}", err);
             }
         });
     }
@@ -149,7 +152,7 @@ impl Timer {
             interval *= 2u32.pow(coef);
         }
 
-        info!("Overlord: timer set {} timer", event);
+        info!("Mlm: timer set {} timer", event);
         let smr_timer = TimeoutInfo::new(interval, event, self.sender.clone());
 
         tokio::spawn(async move {
@@ -196,7 +199,7 @@ impl Timer {
             _ => return Err(ConsensusError::TimerErr("No commit timer".to_string())),
         };
 
-        debug!("Overlord: timer {:?} time out", event);
+        debug!("Mlm: timer {:?} time out", event);
 
         self.state_machine.trigger(SMRTrigger {
             source: TriggerSource::Timer,
@@ -260,7 +263,9 @@ mod test {
     use futures::channel::mpsc::unbounded;
     use futures::stream::StreamExt;
 
-    use crate::smr::smr_types::{FromWhere, SMREvent, SMRTrigger, TriggerSource, TriggerType};
+    use crate::smr::smr_types::{
+        FromWhere, SMREvent, SMRTrigger, TriggerSource, TriggerType,
+    };
     use crate::smr::{Event, SMRHandler};
     use crate::{timer::Timer, types::Hash};
 

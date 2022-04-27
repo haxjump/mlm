@@ -10,7 +10,9 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::stream::{FusedStream, Stream, StreamExt};
 use log::error;
 
-use crate::smr::smr_types::{SMREvent, SMRStatus, SMRTrigger, TriggerSource, TriggerType};
+use crate::smr::smr_types::{
+    SMREvent, SMRStatus, SMRTrigger, TriggerSource, TriggerType,
+};
 use crate::smr::state_machine::StateMachine;
 use crate::types::Hash;
 use crate::{error::ConsensusError, ConsensusResult, INIT_ROUND};
@@ -49,7 +51,7 @@ impl SMR {
             loop {
                 let res = self.state_machine.next().await;
                 if let Some(Err(err)) = res {
-                    error!("Overlord: SMR error {:?}", err);
+                    error!("Mlm: SMR error {:?}", err);
                 } else if res.is_none() {
                     break;
                 }
@@ -105,7 +107,10 @@ pub struct Event {
 impl Stream for Event {
     type Item = SMREvent;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Self::Item>> {
         self.rx.poll_next_unpin(cx)
     }
 }

@@ -9,20 +9,20 @@ use creep::Context;
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
-use overlord::error::ConsensusError;
-use overlord::types::{Commit, Hash, Node, OverlordMsg, Status, ViewChangeReason};
-use overlord::{Codec, Consensus, DurationConfig, Overlord, OverlordHandler};
+use mlm::error::ConsensusError;
+use mlm::types::{Commit, Hash, MlmMsg, Node, Status, ViewChangeReason};
+use mlm::{Codec, Consensus, DurationConfig, Mlm, MlmHandler};
 
 use super::crypto::MockCrypto;
 use super::utils::{gen_random_bytes, hash, timer_config, to_hex};
 use super::wal::{MockWal, RECORD_TMP_FILE};
 use crate::integration_tests::wal::RecordInternal;
 
-pub type Channel = (Sender<OverlordMsg<Block>>, Receiver<OverlordMsg<Block>>);
+pub type Channel = (Sender<MlmMsg<Block>>, Receiver<MlmMsg<Block>>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Block {
-    #[serde(with = "overlord::serde_hex")]
+    #[serde(with = "mlm::serde_hex")]
     inner: Bytes,
 }
 
@@ -44,16 +44,16 @@ impl Codec for Block {
 
 pub struct Adapter {
     pub address: Bytes, // address
-    pub talk_to: HashMap<Bytes, Sender<OverlordMsg<Block>>>,
-    pub hearing: Receiver<OverlordMsg<Block>>,
+    pub talk_to: HashMap<Bytes, Sender<MlmMsg<Block>>>,
+    pub hearing: Receiver<MlmMsg<Block>>,
     pub records: RecordInternal,
 }
 
 impl Adapter {
     fn new(
         address: Bytes,
-        talk_to: HashMap<Bytes, Sender<OverlordMsg<Block>>>,
-        hearing: Receiver<OverlordMsg<Block>>,
+        talk_to: HashMap<Bytes, Sender<MlmMsg<Block>>>,
+        hearing: Receiver<MlmMsg<Block>>,
         records: RecordInternal,
     ) -> Adapter {
         Adapter {
@@ -156,7 +156,7 @@ impl Consensus<Block> for Adapter {
     async fn broadcast_to_other(
         &self,
         _ctx: Context,
-        words: OverlordMsg<Block>,
+        words: MlmMsg<Block>,
     ) -> Result<(), Box<dyn Error + Send>> {
         self.talk_to.iter().for_each(|(_, mouth)| {
             let _ = mouth.send(words.clone());
@@ -168,7 +168,7 @@ impl Consensus<Block> for Adapter {
         &self,
         _ctx: Context,
         address: Bytes,
-        words: OverlordMsg<Block>,
+        words: MlmMsg<Block>,
     ) -> Result<(), Box<dyn Error + Send>> {
         if let Some(sender) = self.talk_to.get(&address) {
             let _ = sender.send(words);
@@ -189,16 +189,16 @@ impl Consensus<Block> for Adapter {
 }
 
 pub struct Participant {
-    pub overlord: Arc<Overlord<Block, Adapter, MockCrypto, MockWal>>,
-    pub handler: OverlordHandler<Block>,
+    pub mlm: Arc<Mlm<Block, Adapter, MockCrypto, MockWal>>,
+    pub handler: MlmHandler<Block>,
     pub adapter: Arc<Adapter>,
 }
 
 impl Participant {
     pub fn new(
         address: &Bytes,
-        talk_to: HashMap<Bytes, Sender<OverlordMsg<Block>>>,
-        hearing: Receiver<OverlordMsg<Block>>,
+        talk_to: HashMap<Bytes, Sender<MlmMsg<Block>>>,
+        hearing: Receiver<MlmMsg<Block>>,
         records: RecordInternal,
     ) -> Self {
         let crypto = MockCrypto::new(address.clone());
@@ -208,18 +208,18 @@ impl Participant {
             hearing,
             records.clone(),
         ));
-        let overlord = Overlord::new(
+        let mlm = Mlm::new(
             address.clone(),
             Arc::clone(&adapter),
             Arc::new(crypto),
             Arc::new(records.wal_record.get(address).unwrap().clone()),
         );
-        let overlord_handler = overlord.get_handler();
+        let mlm_handler = mlm.get_handler();
 
-        overlord_handler
+        mlm_handler
             .send_msg(
                 Context::new(),
-                OverlordMsg::RichStatus(Status {
+                MlmMsg::RichStatus(Status {
                     height: 1,
                     interval: Some(records.interval),
                     timer_config: timer_config(),
@@ -229,8 +229,8 @@ impl Participant {
             .unwrap();
 
         Self {
-            overlord: Arc::new(overlord),
-            handler: overlord_handler,
+            mlm: Arc::new(mlm),
+            handler: mlm_handler,
             adapter,
         }
     }
@@ -244,32 +244,40 @@ impl Participant {
         let adapter = Arc::<Adapter>::clone(&self.adapter);
         let handler = self.handler.clone();
 
-        thread::spawn(move || loop {
-            if let Ok(msg) = adapter.hearing.recv() {
-                match msg {
-                    OverlordMsg::SignedVote(vote) => {
-                        let _ = handler.send_msg(Context::new(), OverlordMsg::SignedVote(vote));
+        thread::spawn(move || {
+            loop {
+                if let Ok(msg) = adapter.hearing.recv() {
+                    match msg {
+                        MlmMsg::SignedVote(vote) => {
+                            let _ = handler
+                                .send_msg(Context::new(), MlmMsg::SignedVote(vote));
+                        }
+                        MlmMsg::SignedProposal(proposal) => {
+                            let _ = handler.send_msg(
+                                Context::new(),
+                                MlmMsg::SignedProposal(proposal),
+                            );
+                        }
+                        MlmMsg::AggregatedVote(agg_vote) => {
+                            let _ = handler.send_msg(
+                                Context::new(),
+                                MlmMsg::AggregatedVote(agg_vote),
+                            );
+                        }
+                        MlmMsg::SignedChoke(choke) => {
+                            let _ = handler
+                                .send_msg(Context::new(), MlmMsg::SignedChoke(choke));
+                        }
+                        MlmMsg::Stop => {
+                            break;
+                        }
+                        _ => {}
                     }
-                    OverlordMsg::SignedProposal(proposal) => {
-                        let _ =
-                            handler.send_msg(Context::new(), OverlordMsg::SignedProposal(proposal));
-                    }
-                    OverlordMsg::AggregatedVote(agg_vote) => {
-                        let _ =
-                            handler.send_msg(Context::new(), OverlordMsg::AggregatedVote(agg_vote));
-                    }
-                    OverlordMsg::SignedChoke(choke) => {
-                        let _ = handler.send_msg(Context::new(), OverlordMsg::SignedChoke(choke));
-                    }
-                    OverlordMsg::Stop => {
-                        break;
-                    }
-                    _ => {}
                 }
             }
         });
 
-        self.overlord
+        self.mlm
             .run(1, interval, node_list, timer_config)
             .await
             .unwrap();

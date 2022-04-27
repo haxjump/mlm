@@ -7,8 +7,8 @@ use hummer::coding::hex_encode;
 use lazy_static::lazy_static;
 use rand::{random, seq::SliceRandom, thread_rng};
 
-use overlord::types::Node;
-use overlord::DurationConfig;
+use mlm::types::Node;
+use mlm::DurationConfig;
 
 lazy_static! {
     static ref HASHER_INST: HasherKeccak = HasherKeccak::new();

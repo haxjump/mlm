@@ -6,11 +6,11 @@ use blake2b_simd::blake2b;
 use bytes::{Bytes, BytesMut};
 use creep::Context;
 use crossbeam_channel::Sender;
-use overlord::error::ConsensusError;
-use overlord::types::{
-    Address, Commit, Hash, Node, OverlordMsg, Signature, Status, ViewChangeReason,
+use mlm::error::ConsensusError;
+use mlm::types::{
+    Address, Commit, Hash, MlmMsg, Node, Signature, Status, ViewChangeReason,
 };
-use overlord::{Codec, Consensus, Crypto};
+use mlm::{Codec, Consensus, Crypto};
 use rand::random;
 use serde::{Deserialize, Serialize};
 
@@ -99,7 +99,7 @@ impl Consensus<Pill> for ConsensusHelper<Pill> {
     async fn broadcast_to_other(
         &self,
         _ctx: Context,
-        msg: OverlordMsg<Pill>,
+        msg: MlmMsg<Pill>,
     ) -> Result<(), Box<dyn Error + Send>> {
         let message = Msg {
             content: msg,
@@ -114,7 +114,7 @@ impl Consensus<Pill> for ConsensusHelper<Pill> {
         &self,
         _ctx: Context,
         addr: Address,
-        msg: OverlordMsg<Pill>,
+        msg: MlmMsg<Pill>,
     ) -> Result<(), Box<dyn Error + Send>> {
         let message = Msg {
             content: msg,
@@ -183,7 +183,7 @@ impl Crypto for BlsCrypto {
 // }
 
 pub struct Msg<T: Codec> {
-    pub content: OverlordMsg<T>,
+    pub content: MlmMsg<T>,
     pub approach: Approach,
 }
 

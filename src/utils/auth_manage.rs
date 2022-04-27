@@ -206,7 +206,11 @@ mod test {
 
         let mut authority_list = Vec::new();
         for _ in 0..len {
-            authority_list.push(gen_node(gen_address(), random::<u32>(), random::<u32>()));
+            authority_list.push(gen_node(
+                gen_address(),
+                random::<u32>(),
+                random::<u32>(),
+            ));
         }
         authority_list
     }
@@ -281,21 +285,24 @@ mod test {
 
         for i in 0..4 {
             let bit_map = gen_bitmap(4, vec![i]);
-            let res = authority.is_above_threshold(Bytes::from(bit_map.to_bytes()).as_ref());
+            let res =
+                authority.is_above_threshold(Bytes::from(bit_map.to_bytes()).as_ref());
             assert!(!res.unwrap())
         }
 
         let tmp = vec![vec![1, 2], vec![1, 3], vec![2, 3], vec![0, 1], vec![0, 2]];
         for i in tmp.into_iter() {
             let bit_map = gen_bitmap(4, i);
-            let res = authority.is_above_threshold(Bytes::from(bit_map.to_bytes()).as_ref());
+            let res =
+                authority.is_above_threshold(Bytes::from(bit_map.to_bytes()).as_ref());
             assert!(!res.unwrap())
         }
 
         let tmp = vec![vec![0, 1, 2], vec![0, 1, 3], vec![1, 2, 3]];
         for i in tmp.into_iter() {
             let bit_map = gen_bitmap(4, i);
-            let res = authority.is_above_threshold(Bytes::from(bit_map.to_bytes()).as_ref());
+            let res =
+                authority.is_above_threshold(Bytes::from(bit_map.to_bytes()).as_ref());
             assert!(res.unwrap())
         }
 
@@ -383,7 +390,8 @@ mod test {
         let mut origin_auth_list = auth_list.clone();
         origin_auth_list.sort();
         let bit_map = gen_bitmap(10, vec![0, 1, 2]);
-        let res = extract_voters(&mut auth_list, &Bytes::from(bit_map.to_bytes())).unwrap();
+        let res =
+            extract_voters(&mut auth_list, &Bytes::from(bit_map.to_bytes())).unwrap();
 
         assert_eq!(res.len(), 3);
 

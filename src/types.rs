@@ -17,7 +17,7 @@ pub type Hash = Bytes;
 pub type Signature = Bytes;
 
 /// Vote or QC types. Prevote and precommit QC will promise the rightness and the final consistency
-/// of overlord consensus protocol.
+/// of mlm consensus protocol.
 #[derive(Serialize, Deserialize, Clone, Debug, Display, PartialEq, Eq, Hash)]
 pub enum VoteType {
     /// Prevote vote or QC.
@@ -67,10 +67,10 @@ impl TryFrom<u8> for VoteType {
     }
 }
 
-/// Overlord messages.
+/// Mlm messages.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Display, PartialEq, Eq)]
-pub enum OverlordMsg<T: Codec> {
+pub enum MlmMsg<T: Codec> {
     /// Signed proposal message.
     #[display(fmt = "Signed Proposal")]
     SignedProposal(SignedProposal<T>),
@@ -87,7 +87,7 @@ pub enum OverlordMsg<T: Codec> {
     #[display(fmt = "Choke Message")]
     SignedChoke(SignedChoke),
     /// Stop consensus process.
-    #[display(fmt = "Stop Overlord")]
+    #[display(fmt = "Stop Mlm")]
     Stop,
 
     /// This is only for easier testing.
@@ -95,18 +95,18 @@ pub enum OverlordMsg<T: Codec> {
     Commit(Commit<T>),
 }
 
-impl<T: Codec> OverlordMsg<T> {
+impl<T: Codec> MlmMsg<T> {
     pub(crate) fn is_rich_status(&self) -> bool {
-        matches!(self, OverlordMsg::RichStatus(_))
+        matches!(self, MlmMsg::RichStatus(_))
     }
 
     pub(crate) fn get_height(&self) -> u64 {
         match self {
-            OverlordMsg::SignedProposal(sp) => sp.proposal.height,
-            OverlordMsg::SignedVote(sv) => sv.get_height(),
-            OverlordMsg::AggregatedVote(av) => av.get_height(),
-            OverlordMsg::RichStatus(s) => s.height,
-            OverlordMsg::SignedChoke(sc) => sc.choke.height,
+            MlmMsg::SignedProposal(sp) => sp.proposal.height,
+            MlmMsg::SignedVote(sv) => sv.get_height(),
+            MlmMsg::AggregatedVote(av) => av.get_height(),
+            MlmMsg::RichStatus(s) => s.height,
+            MlmMsg::SignedChoke(sc) => sc.choke.height,
             _ => unreachable!(),
         }
     }
@@ -123,7 +123,7 @@ pub enum UpdateFrom {
     ChokeQC(AggregatedChoke),
 }
 
-/// The reason of overlord view change.
+/// The reason of mlm view change.
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum ViewChangeReason {
     ///

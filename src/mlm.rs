@@ -6,34 +6,39 @@ use parking_lot::RwLock;
 
 use crate::error::ConsensusError;
 use crate::state::process::State;
-use crate::types::{Address, Node, OverlordMsg};
+use crate::types::{Address, MlmMsg, Node};
 use crate::DurationConfig;
 use crate::{smr::SMR, timer::Timer};
 use crate::{Codec, Consensus, ConsensusResult, Crypto, Wal};
 
 type Pile<T> = RwLock<Option<T>>;
 
-/// An overlord consensus instance.
-pub struct Overlord<T: Codec, F: Consensus<T>, C: Crypto, W: Wal> {
-    sender: Pile<UnboundedSender<(Context, OverlordMsg<T>)>>,
-    state_rx: Pile<UnboundedReceiver<(Context, OverlordMsg<T>)>>,
+/// An mlm consensus instance.
+pub struct Mlm<T: Codec, F: Consensus<T>, C: Crypto, W: Wal> {
+    sender: Pile<UnboundedSender<(Context, MlmMsg<T>)>>,
+    state_rx: Pile<UnboundedReceiver<(Context, MlmMsg<T>)>>,
     address: Pile<Address>,
     consensus: Pile<Arc<F>>,
     crypto: Pile<Arc<C>>,
     wal: Pile<Arc<W>>,
 }
 
-impl<T, F, C, W> Overlord<T, F, C, W>
+impl<T, F, C, W> Mlm<T, F, C, W>
 where
     T: Codec + Send + Sync + 'static,
     F: Consensus<T> + 'static,
     C: Crypto + Send + Sync + 'static,
     W: Wal + 'static,
 {
-    /// Create a new overlord and return an overlord instance with an unbounded receiver.
-    pub fn new(address: Address, consensus: Arc<F>, crypto: Arc<C>, wal: Arc<W>) -> Self {
+    /// Create a new mlm and return an mlm instance with an unbounded receiver.
+    pub fn new(
+        address: Address,
+        consensus: Arc<F>,
+        crypto: Arc<C>,
+        wal: Arc<W>,
+    ) -> Self {
         let (tx, rx) = unbounded();
-        Overlord {
+        Mlm {
             sender: RwLock::new(Some(tx)),
             state_rx: RwLock::new(Some(rx)),
             address: RwLock::new(Some(address)),
@@ -43,15 +48,15 @@ where
         }
     }
 
-    /// Get the overlord handler from the overlord instance.
-    pub fn get_handler(&self) -> OverlordHandler<T> {
+    /// Get the mlm handler from the mlm instance.
+    pub fn get_handler(&self) -> MlmHandler<T> {
         let sender = self.sender.write();
         assert!(sender.is_some());
         let tx = sender.clone().unwrap();
-        OverlordHandler::new(tx)
+        MlmHandler::new(tx)
     }
 
-    /// Run overlord consensus process. The `interval` is the height interval as millisecond.
+    /// Run mlm consensus process. The `interval` is the height interval as millisecond.
     pub async fn run(
         &self,
         init_height: u64,
@@ -95,7 +100,7 @@ where
             (tmp_rx, tmp_state, tmp_resp)
         };
 
-        log::info!("Overlord start running");
+        log::info!("Mlm start running");
 
         // Run SMR.
         smr_provider.run();
@@ -110,20 +115,20 @@ where
     }
 }
 
-/// An overlord handler to send messages to an overlord instance.
+/// An mlm handler to send messages to an mlm instance.
 #[derive(Clone, Debug)]
-pub struct OverlordHandler<T: Codec>(UnboundedSender<(Context, OverlordMsg<T>)>);
+pub struct MlmHandler<T: Codec>(UnboundedSender<(Context, MlmMsg<T>)>);
 
-impl<T: Codec> OverlordHandler<T> {
-    fn new(tx: UnboundedSender<(Context, OverlordMsg<T>)>) -> Self {
-        OverlordHandler(tx)
+impl<T: Codec> MlmHandler<T> {
+    fn new(tx: UnboundedSender<(Context, MlmMsg<T>)>) -> Self {
+        MlmHandler(tx)
     }
 
-    /// Send overlord message to the instance. Return `Err()` when the message channel is closed.
-    pub fn send_msg(&self, ctx: Context, msg: OverlordMsg<T>) -> ConsensusResult<()> {
+    /// Send mlm message to the instance. Return `Err()` when the message channel is closed.
+    pub fn send_msg(&self, ctx: Context, msg: MlmMsg<T>) -> ConsensusResult<()> {
         let ctx = match muta_apm::MUTA_TRACER.span(
-            "overlord.send_msg_to_inner",
-            vec![muta_apm::rustracing::tag::Tag::new("kind", "overlord")],
+            "mlm.send_msg_to_inner",
+            vec![muta_apm::rustracing::tag::Tag::new("kind", "mlm")],
         ) {
             Some(mut span) => {
                 span.log(|log| {
@@ -136,12 +141,12 @@ impl<T: Codec> OverlordHandler<T> {
 
         if self.0.is_closed() {
             Err(ConsensusError::ChannelErr(
-                "[OverlordHandler]: channel closed".to_string(),
+                "[MlmHandler]: channel closed".to_string(),
             ))
         } else {
-            self.0
-                .unbounded_send((ctx, msg))
-                .map_err(|e| ConsensusError::Other(format!("Send message error {:?}", e)))
+            self.0.unbounded_send((ctx, msg)).map_err(|e| {
+                ConsensusError::Other(format!("Send message error {:?}", e))
+            })
         }
     }
 }

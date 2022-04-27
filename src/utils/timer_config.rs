@@ -5,7 +5,7 @@ use crate::smr::smr_types::SMREvent;
 use crate::DurationConfig;
 use crate::{error::ConsensusError, ConsensusResult};
 
-/// Overlord timer config.
+/// Mlm timer config.
 #[derive(Debug, Clone)]
 pub struct TimerConfig {
     interval: Cell<u64>,

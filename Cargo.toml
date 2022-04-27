@@ -1,5 +1,5 @@
 [package]
-name = "overlord"
+name = "mlm"
 version = "0.3.2"
 authors = ["Eason Gao <kaoimin@qq.com>"]
 edition = "2021"
@@ -8,9 +8,9 @@ include = ["src/*", "README.md", "LICENSE", "rust-toolchain"]
 readme = "README.md"
 keywords = ["consensus", "bft", "distributed-systems"]
 categories = ["algorithms"]
-repository = "https://github.com/cryptape/overlord"
+repository = "https://github.com/haxjump/mlm"
 description = """
-Overlord consensus procotol.
+Mlm consensus procotol.
 """
 
 [dependencies]

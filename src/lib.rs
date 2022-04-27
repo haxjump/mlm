@@ -1,4 +1,4 @@
-//! Overlord Consensus Protocol is a Byzantine fault tolerance (BFT) consensus algorithm aiming to
+//! Mlm Consensus Protocol is a Byzantine fault tolerance (BFT) consensus algorithm aiming to
 //! support thousands of transactions per second under hundreds of consensus nodes, with transaction
 //! delays of no more than a few seconds. Simply put, it is a high-performance consensus algorithm
 //! able to meets most of the real business needs.
@@ -9,10 +9,10 @@
 
 /// A module that impl rlp encodable and decodable trait for types that need to save wal.
 mod codec;
-/// Overlord error module.
+/// Mlm error module.
 pub mod error;
-/// Create and run the overlord consensus process.
-pub mod overlord;
+/// Create and run the mlm consensus process.
+pub mod mlm;
 /// serialize Bytes in hex format
 pub mod serde_hex;
 /// serialize Vec<Bytes> in hex format
@@ -23,15 +23,15 @@ mod smr;
 mod state;
 /// The timer module to ensure the protocol liveness.
 mod timer;
-/// Message types using in the overlord consensus protocol.
+/// Message types using in the mlm consensus protocol.
 pub mod types;
 /// Some utility functions.
 mod utils;
 /// Write ahead log module.
 mod wal;
 
-pub use self::overlord::Overlord;
-pub use self::overlord::OverlordHandler;
+pub use self::mlm::Mlm;
+pub use self::mlm::MlmHandler;
 pub use self::utils::auth_manage::{extract_voters, get_leader};
 pub use creep::Context;
 pub use wal::WalInfo;
@@ -44,9 +44,11 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConsensusError;
-use crate::types::{Address, Commit, Hash, Node, OverlordMsg, Signature, Status, ViewChangeReason};
+use crate::types::{
+    Address, Commit, Hash, MlmMsg, Node, Signature, Status, ViewChangeReason,
+};
 
-/// Overlord consensus result.
+/// Mlm consensus result.
 pub type ConsensusResult<T> = std::result::Result<T, ConsensusError>;
 
 const INIT_HEIGHT: u64 = 0;
@@ -91,7 +93,7 @@ pub trait Consensus<T: Codec>: Send + Sync {
     async fn broadcast_to_other(
         &self,
         ctx: Context,
-        msg: OverlordMsg<T>,
+        msg: MlmMsg<T>,
     ) -> Result<(), Box<dyn Error + Send>>;
 
     /// Transmit a message to the Relayer, the third argument is the relayer's address.
@@ -99,14 +101,20 @@ pub trait Consensus<T: Codec>: Send + Sync {
         &self,
         ctx: Context,
         addr: Address,
-        msg: OverlordMsg<T>,
+        msg: MlmMsg<T>,
     ) -> Result<(), Box<dyn Error + Send>>;
 
-    /// Report the overlord error with the corresponding context.
+    /// Report the mlm error with the corresponding context.
     fn report_error(&self, ctx: Context, error: ConsensusError);
 
-    /// Report the overlord view change reason.
-    fn report_view_change(&self, ctx: Context, height: u64, round: u64, reason: ViewChangeReason);
+    /// Report the mlm view change reason.
+    fn report_view_change(
+        &self,
+        ctx: Context,
+        height: u64,
+        round: u64,
+        reason: ViewChangeReason,
+    );
 }
 
 /// Trait for doing serialize and deserialize.

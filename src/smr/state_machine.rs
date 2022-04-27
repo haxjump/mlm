@@ -14,7 +14,7 @@ use crate::wal::SMRBase;
 use crate::{error::ConsensusError, smr::Event, types::Hash};
 use crate::{ConsensusResult, INIT_HEIGHT, INIT_ROUND};
 
-/// A smallest implementation of an atomic overlord state machine. It
+/// A smallest implementation of an atomic mlm state machine. It
 #[derive(Debug, Display)]
 #[rustfmt::skip]
 #[display(fmt = "State machine height {}, round {}, step {:?}", height, round, step)]
@@ -32,7 +32,10 @@ pub struct StateMachine {
 impl Stream for StateMachine {
     type Item = ConsensusResult<()>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Self::Item>> {
         match Stream::poll_next(Pin::new(&mut self.trigger), cx) {
             Poll::Pending => Poll::Pending,
 
@@ -56,11 +59,13 @@ impl Stream for StateMachine {
                         msg.source,
                         msg.height,
                     )),
-                    TriggerType::PrevoteQC => {
-                        Some(self.handle_prevote(msg.hash, msg.round, msg.source, msg.height))
-                    }
+                    TriggerType::PrevoteQC => Some(
+                        self.handle_prevote(msg.hash, msg.round, msg.source, msg.height),
+                    ),
                     TriggerType::PrecommitQC => {
-                        Some(self.handle_precommit(msg.hash, msg.round, msg.source, msg.height))
+                        Some(self.handle_precommit(
+                            msg.hash, msg.round, msg.source, msg.height,
+                        ))
                     }
                     TriggerType::BrakeTimeout => {
                         assert!(msg.source == TriggerSource::Timer);
@@ -107,7 +112,7 @@ impl StateMachine {
             Ok(())
         } else {
             info!(
-                "Overlord: SMR brake timeout height {}, round {}",
+                "Mlm: SMR brake timeout height {}, round {}",
                 self.height, round
             );
             self.throw_event(SMREvent::Brake {
@@ -123,7 +128,7 @@ impl StateMachine {
             return Ok(());
         }
 
-        info!("Overlord: SMR continue round {}", round);
+        info!("Mlm: SMR continue round {}", round);
 
         self.round = round - 1;
         let (lock_round, lock_proposal) = self
@@ -161,7 +166,7 @@ impl StateMachine {
         status: SMRStatus,
         source: TriggerSource,
     ) -> ConsensusResult<()> {
-        info!("Overlord: SMR triggered by new height {}", status.height);
+        info!("Mlm: SMR triggered by new height {}", status.height);
 
         let height = status.height;
         if source != TriggerSource::State {
@@ -206,7 +211,7 @@ impl StateMachine {
         }
 
         info!(
-            "Overlord: SMR triggered by a proposal hash {:?}, from {:?}, height {}, round {}",
+            "Mlm: SMR triggered by a proposal hash {:?}, from {:?}, height {}, round {}",
             hex_encode(proposal_hash.clone()),
             source,
             self.height,
@@ -238,7 +243,7 @@ impl StateMachine {
         self.check()?;
         if let Some(lock_round) = lock_round {
             if let Some(lock) = self.lock.clone() {
-                debug!("Overlord: SMR handle proposal with a lock");
+                debug!("Mlm: SMR handle proposal with a lock");
 
                 if lock_round > lock.round {
                     self.remove_polc();
@@ -286,7 +291,7 @@ impl StateMachine {
         }
 
         info!(
-            "Overlord: SMR triggered by prevote QC hash {:?} qc round {} from {:?}, height {}, round {}",
+            "Mlm: SMR triggered by prevote QC hash {:?} qc round {} from {:?}, height {}, round {}",
             hex_encode(prevote_hash.clone()),
             prevote_round,
             source,
@@ -329,10 +334,10 @@ impl StateMachine {
         self.update_polc(prevote_hash, prevote_round);
 
         if prevote_round > self.round {
-            let (lock_round, lock_proposal) = self
-                .lock
-                .clone()
-                .map_or_else(|| (None, None), |lock| (Some(lock.round), Some(lock.hash)));
+            let (lock_round, lock_proposal) = self.lock.clone().map_or_else(
+                || (None, None),
+                |lock| (Some(lock.round), Some(lock.hash)),
+            );
 
             self.round = prevote_round;
             self.throw_event(SMREvent::NewRoundInfo {
@@ -379,7 +384,7 @@ impl StateMachine {
         }
 
         info!(
-            "Overlord: SMR triggered by precommit QC hash {:?} qc round {} from {:?}, height {}, round {}",
+            "Mlm: SMR triggered by precommit QC hash {:?} qc round {} from {:?}, height {}, round {}",
             hex_encode(precommit_hash.clone()),
             precommit_round,
             source,
@@ -398,7 +403,7 @@ impl StateMachine {
             }
 
             info!(
-                "Overlord: SMR goto brake step, height {}, round {}",
+                "Mlm: SMR goto brake step, height {}, round {}",
                 self.height, self.round
             );
             self.goto_step(Step::Brake);
@@ -435,26 +440,38 @@ impl StateMachine {
     }
 
     fn throw_event(&mut self, event: SMREvent) -> ConsensusResult<()> {
-        info!("Overlord: SMR throw {} event", event);
+        info!("Mlm: SMR throw {} event", event);
         self.event.0.unbounded_send(event.clone()).map_err(|err| {
-            ConsensusError::ThrowEventErr(format!("event: {}, error: {:?}", event.clone(), err))
+            ConsensusError::ThrowEventErr(format!(
+                "event: {}, error: {:?}",
+                event.clone(),
+                err
+            ))
         })?;
         self.event.1.unbounded_send(event.clone()).map_err(|err| {
-            ConsensusError::ThrowEventErr(format!("event: {}, error: {:?}", event.clone(), err))
+            ConsensusError::ThrowEventErr(format!(
+                "event: {}, error: {:?}",
+                event.clone(),
+                err
+            ))
         })?;
         Ok(())
     }
 
     fn throw_timer_event(&mut self, event: SMREvent) -> ConsensusResult<()> {
         self.event.1.unbounded_send(event.clone()).map_err(|err| {
-            ConsensusError::ThrowEventErr(format!("event: {}, error: {:?}", event.clone(), err))
+            ConsensusError::ThrowEventErr(format!(
+                "event: {}, error: {:?}",
+                event.clone(),
+                err
+            ))
         })?;
         Ok(())
     }
 
     /// Goto new height and clear everything.
     fn goto_new_height(&mut self, height: u64) {
-        info!("Overlord: SMR goto new height: {}", height);
+        info!("Mlm: SMR goto new height: {}", height);
         self.height = height;
         self.round = INIT_ROUND;
         self.goto_step(Step::Propose);
@@ -464,7 +481,7 @@ impl StateMachine {
 
     /// Keep the lock, if any, when go to the next round.
     fn goto_next_round(&mut self) {
-        info!("Overlord: SMR goto next round {}", self.round + 1);
+        info!("Mlm: SMR goto next round {}", self.round + 1);
         self.round += 1;
         self.goto_step(Step::Propose);
     }
@@ -511,7 +528,7 @@ impl StateMachine {
     /// Goto the given step.
     #[inline]
     fn goto_step(&mut self, step: Step) {
-        debug!("Overlord: SMR goto step {:?}", step);
+        debug!("Mlm: SMR goto step {:?}", step);
         self.step = step;
     }
 
@@ -519,7 +536,7 @@ impl StateMachine {
     /// the hash is empty, remove it. Otherwise, set lock round and hash as the given round and
     /// hash.
     fn update_polc(&mut self, hash: Hash, round: u64) {
-        debug!("Overlord: SMR update PoLC at round {}", round);
+        debug!("Mlm: SMR update PoLC at round {}", round);
         self.set_proposal(hash.clone());
 
         if hash.is_empty() {
@@ -547,7 +564,7 @@ impl StateMachine {
     /// 4. If the step is propose, proposal hash must be empty unless lock is some.
     #[inline(always)]
     fn check(&mut self) -> ConsensusResult<()> {
-        debug!("Overlord: SMR do self check");
+        debug!("Mlm: SMR do self check");
 
         // // Lock hash must be same as proposal hash, if has.
         // if self.round == 0

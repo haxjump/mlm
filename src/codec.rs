@@ -5,9 +5,9 @@ use rlp::{Decodable, DecoderError, Encodable, Prototype, Rlp, RlpStream};
 
 use crate::smr::smr_types::Step;
 use crate::types::{
-    Address, AggregatedChoke, AggregatedSignature, AggregatedVote, Choke, Commit, Hash, HashChoke,
-    Node, PoLC, Proof, Proposal, Signature, SignedChoke, SignedProposal, SignedVote, Status,
-    UpdateFrom, Vote, VoteType,
+    Address, AggregatedChoke, AggregatedSignature, AggregatedVote, Choke, Commit, Hash,
+    HashChoke, Node, PoLC, Proof, Proposal, Signature, SignedChoke, SignedProposal,
+    SignedVote, Status, UpdateFrom, Vote, VoteType,
 };
 use crate::wal::{WalInfo, WalLock};
 use crate::{Codec, DurationConfig};
@@ -640,7 +640,8 @@ mod test {
         }
 
         fn decode(data: Bytes) -> Result<Self, Box<dyn Error + Send>> {
-            let decode: Pill = deserialize(data.as_ref()).expect("Deserialize Pill error.");
+            let decode: Pill =
+                deserialize(data.as_ref()).expect("Deserialize Pill error.");
             Ok(decode)
         }
     }
@@ -840,7 +841,9 @@ mod test {
     fn gen_aggr_signature() -> AggregatedSignature {
         AggregatedSignature {
             signature: gen_signature(),
-            address_bitmap: Bytes::from((0..8).map(|_| random::<u8>()).collect::<Vec<_>>()),
+            address_bitmap: Bytes::from(
+                (0..8).map(|_| random::<u8>()).collect::<Vec<_>>(),
+            ),
         }
     }
 
@@ -857,11 +860,13 @@ mod test {
     fn test_types_rlp() {
         // Test SignedProposal
         let signed_proposal = SignedProposal::new(Pill::new(), Some(PoLC::new()));
-        let res: SignedProposal<Pill> = rlp::decode(&signed_proposal.rlp_bytes()).unwrap();
+        let res: SignedProposal<Pill> =
+            rlp::decode(&signed_proposal.rlp_bytes()).unwrap();
         assert_eq!(signed_proposal, res);
 
         let signed_proposal = SignedProposal::new(Pill::new(), None);
-        let res: SignedProposal<Pill> = rlp::decode(&signed_proposal.rlp_bytes()).unwrap();
+        let res: SignedProposal<Pill> =
+            rlp::decode(&signed_proposal.rlp_bytes()).unwrap();
         assert_eq!(signed_proposal, res);
 
         // Test SignedVote
@@ -903,11 +908,13 @@ mod test {
         assert_eq!(aggregated_choke, res);
 
         // Test Signed Choke
-        let signed_choke = SignedChoke::new(UpdateFrom::PrevoteQC(AggregatedVote::new(1u8)));
+        let signed_choke =
+            SignedChoke::new(UpdateFrom::PrevoteQC(AggregatedVote::new(1u8)));
         let res: SignedChoke = rlp::decode(&signed_choke.rlp_bytes()).unwrap();
         assert_eq!(signed_choke, res);
 
-        let signed_choke = SignedChoke::new(UpdateFrom::PrecommitQC(AggregatedVote::new(2u8)));
+        let signed_choke =
+            SignedChoke::new(UpdateFrom::PrecommitQC(AggregatedVote::new(2u8)));
         let res: SignedChoke = rlp::decode(&signed_choke.rlp_bytes()).unwrap();
         assert_eq!(signed_choke, res);
 

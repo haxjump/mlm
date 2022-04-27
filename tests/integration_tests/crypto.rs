@@ -1,6 +1,6 @@
 use super::utils::hash;
 use bytes::Bytes;
-use overlord::Crypto;
+use mlm::Crypto;
 use std::error::Error;
 
 pub struct MockCrypto {

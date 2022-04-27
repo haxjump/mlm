@@ -15,14 +15,16 @@ use muta_apm::derive::tracing_span;
 use tokio::time::sleep;
 
 use crate::error::ConsensusError;
-use crate::smr::smr_types::{FromWhere, SMREvent, SMRTrigger, Step, TriggerSource, TriggerType};
+use crate::smr::smr_types::{
+    FromWhere, SMREvent, SMRTrigger, Step, TriggerSource, TriggerType,
+};
 use crate::smr::{Event, SMRHandler};
 use crate::state::collection::{ChokeCollector, ProposalCollector, VoteCollector};
 use crate::state::parallel::parallel_verify;
 use crate::types::{
-    Address, AggregatedChoke, AggregatedSignature, AggregatedVote, Choke, Commit, Hash, Node,
-    OverlordMsg, PoLC, Proof, Proposal, Signature, SignedChoke, SignedProposal, SignedVote, Status,
-    UpdateFrom, VerifyResp, ViewChangeReason, Vote, VoteType,
+    Address, AggregatedChoke, AggregatedSignature, AggregatedVote, Choke, Commit, Hash,
+    MlmMsg, Node, PoLC, Proof, Proposal, Signature, SignedChoke, SignedProposal,
+    SignedVote, Status, UpdateFrom, VerifyResp, ViewChangeReason, Vote, VoteType,
 };
 use crate::utils::auth_manage::AuthorityManage;
 use crate::wal::{SMRBase, WalInfo, WalLock};
@@ -31,7 +33,7 @@ use crate::{Codec, Consensus, ConsensusResult, Crypto, Wal, INIT_HEIGHT, INIT_RO
 const FUTURE_HEIGHT_GAP: u64 = 5;
 const FUTURE_ROUND_GAP: u64 = 10;
 
-/// Overlord state struct. It maintains the local state of the node, and monitor the SMR event. The
+/// Mlm state struct. It maintains the local state of the node, and monitor the SMR event. The
 /// `proposals` is used to cache the signed proposals that are with higher height or round. The
 /// `hash_with_block` field saves hash and its corresponding block with the current height and
 /// round. The `votes` field saves all signed votes and quorum certificates which height is higher
@@ -56,7 +58,7 @@ pub struct State<T: Codec, F: Consensus<T>, C: Crypto, W: Wal> {
     consensus_power: bool,
     stopped: bool,
 
-    verify_sig_tx: UnboundedSender<(Context, OverlordMsg<T>)>,
+    verify_sig_tx: UnboundedSender<(Context, MlmMsg<T>)>,
     resp_tx: UnboundedSender<VerifyResp>,
     function: Arc<F>,
     wal: Arc<W>,
@@ -77,7 +79,7 @@ where
         init_height: u64,
         interval: u64,
         mut authority_list: Vec<Node>,
-        verify_tx: UnboundedSender<(Context, OverlordMsg<T>)>,
+        verify_tx: UnboundedSender<(Context, MlmMsg<T>)>,
         consensus: Arc<F>,
         crypto: Arc<C>,
         wal_engine: Arc<W>,
@@ -118,20 +120,20 @@ where
     /// Run state module.
     pub(crate) async fn run(
         &mut self,
-        mut raw_rx: UnboundedReceiver<(Context, OverlordMsg<T>)>,
+        mut raw_rx: UnboundedReceiver<(Context, MlmMsg<T>)>,
         mut event: Event,
         mut verify_resp: UnboundedReceiver<VerifyResp>,
-        mut verify_sig: UnboundedReceiver<(Context, OverlordMsg<T>)>,
+        mut verify_sig: UnboundedReceiver<(Context, MlmMsg<T>)>,
     ) {
-        debug!("Overlord: state start running");
+        debug!("Mlm: state start running");
         if let Err(e) = self.start_with_wal().await {
-            error!("Overlord: start with wal error {:?}", e);
+            error!("Mlm: start with wal error {:?}", e);
         }
 
         loop {
             select! {
                 raw = raw_rx.next() => {
-                    let (ctx, msg) = raw.expect("Overlord message handler dropped");
+                    let (ctx, msg) = raw.expect("Mlm message handler dropped");
 
                     if msg.is_rich_status() {
                         let _ = self.verify_sig_tx.unbounded_send((ctx, msg));
@@ -165,7 +167,7 @@ where
                     }
 
                     if let Err(e) = self.handle_event(evt).await{
-                        error!("Overlord: state {:?} error", e);
+                        error!("Mlm: state {:?} error", e);
                     }
                 }
 
@@ -175,15 +177,15 @@ where
                     }
 
                     if let Err(e) = self.handle_resp(res) {
-                        error!("Overlord: state {:?} error", e);
+                        error!("Mlm: state {:?} error", e);
                     }
                 }
 
                 verified_msg = verify_sig.next() => {
-                    let (ctx, msg) = verified_msg.expect("Overlord message handler dropped");
+                    let (ctx, msg) = verified_msg.expect("Mlm message handler dropped");
                     if let Err(e) = self.handle_msg(ctx.clone(), msg).await {
                         self.report_error(ctx, e.clone());
-                        error!("Overlord: state {:?} error", e);
+                        error!("Mlm: state {:?} error", e);
                     }
                 }
             }
@@ -191,53 +193,53 @@ where
     }
 
     /// A function to handle message from the network. Public this in the crate to do unit tests.
-    #[tracing_span(kind = "overlord")]
+    #[tracing_span(kind = "mlm")]
     pub(crate) async fn handle_msg(
         &mut self,
         ctx: Context,
-        raw: OverlordMsg<T>,
+        raw: MlmMsg<T>,
     ) -> ConsensusResult<()> {
         if !self.consensus_power && !raw.is_rich_status() {
             return Ok(());
         }
 
         match raw {
-            OverlordMsg::SignedProposal(sp) => {
+            MlmMsg::SignedProposal(sp) => {
                 if let Err(e) = self.handle_signed_proposal(ctx.clone(), sp).await {
-                    error!("Overlord: state handle signed proposal error {:?}", e);
+                    error!("Mlm: state handle signed proposal error {:?}", e);
                 }
                 Ok(())
             }
 
-            OverlordMsg::AggregatedVote(av) => {
+            MlmMsg::AggregatedVote(av) => {
                 if let Err(e) = self.handle_aggregated_vote(ctx.clone(), av).await {
-                    error!("Overlord: state handle aggregated vote error {:?}", e);
+                    error!("Mlm: state handle aggregated vote error {:?}", e);
                 }
                 Ok(())
             }
 
-            OverlordMsg::SignedVote(sv) => {
+            MlmMsg::SignedVote(sv) => {
                 if let Err(e) = self.handle_signed_vote(ctx.clone(), sv).await {
-                    error!("Overlord: state handle signed vote error {:?}", e);
+                    error!("Mlm: state handle signed vote error {:?}", e);
                 }
                 Ok(())
             }
 
-            OverlordMsg::SignedChoke(sc) => {
+            MlmMsg::SignedChoke(sc) => {
                 if let Err(e) = self.handle_signed_choke(ctx.clone(), sc).await {
-                    error!("Overlord: state handle signed choke error {:?}", e);
+                    error!("Mlm: state handle signed choke error {:?}", e);
                 }
                 Ok(())
             }
 
-            OverlordMsg::RichStatus(rs) => {
+            MlmMsg::RichStatus(rs) => {
                 if let Err(e) = self.goto_new_height(ctx.clone(), rs).await {
-                    error!("Overlord: state handle rich status error {:?}", e);
+                    error!("Mlm: state handle rich status error {:?}", e);
                 }
                 Ok(())
             }
 
-            OverlordMsg::Stop => {
+            MlmMsg::Stop => {
                 self.state_machine.trigger(SMRTrigger {
                     trigger_type: TriggerType::Stop,
                     source: TriggerSource::State,
@@ -253,13 +255,18 @@ where
 
             // This is for unit tests.
             #[cfg(test)]
-            OverlordMsg::Commit(_) => Ok(()),
+            MlmMsg::Commit(_) => Ok(()),
         }
     }
 
     /// A function to handle event from the SMR. Public this function in the crate to do unit tests.
-    pub(crate) async fn handle_event(&mut self, event: Option<SMREvent>) -> ConsensusResult<()> {
-        match event.ok_or_else(|| ConsensusError::Other("Event sender dropped".to_string()))? {
+    pub(crate) async fn handle_event(
+        &mut self,
+        event: Option<SMREvent>,
+    ) -> ConsensusResult<()> {
+        match event
+            .ok_or_else(|| ConsensusError::Other("Event sender dropped".to_string()))?
+        {
             SMREvent::NewRoundInfo {
                 round,
                 lock_round,
@@ -271,7 +278,7 @@ where
                     .handle_new_round(round, lock_round, lock_proposal, from_where)
                     .await
                 {
-                    error!("Overlord: state handle new round error {:?}", e);
+                    error!("Mlm: state handle new round error {:?}", e);
                 }
                 Ok(())
             }
@@ -285,7 +292,7 @@ where
                     .handle_vote_event(block_hash, VoteType::Prevote, lock_round)
                     .await
                 {
-                    error!("Overlord: state handle prevote vote error {:?}", e);
+                    error!("Mlm: state handle prevote vote error {:?}", e);
                 }
                 Ok(())
             }
@@ -299,14 +306,14 @@ where
                     .handle_vote_event(block_hash, VoteType::Precommit, lock_round)
                     .await
                 {
-                    error!("Overlord: state handle precommit vote error {:?}", e);
+                    error!("Mlm: state handle precommit vote error {:?}", e);
                 }
                 Ok(())
             }
 
             SMREvent::Commit(hash) => {
                 if let Err(e) = self.handle_commit(hash).await {
-                    error!("Overlord: state handle commit error {:?}", e);
+                    error!("Mlm: state handle commit error {:?}", e);
                 }
                 Ok(())
             }
@@ -321,7 +328,7 @@ where
                 }
 
                 if let Err(e) = self.handle_brake(round, lock_round).await {
-                    error!("Overlord: state handle brake error {:?}", e);
+                    error!("Mlm: state handle brake error {:?}", e);
                 }
                 Ok(())
             }
@@ -331,14 +338,15 @@ where
     }
 
     fn handle_resp(&mut self, msg: Option<VerifyResp>) -> ConsensusResult<()> {
-        let resp = msg.ok_or_else(|| ConsensusError::Other("Event sender dropped".to_string()))?;
+        let resp = msg
+            .ok_or_else(|| ConsensusError::Other("Event sender dropped".to_string()))?;
         if resp.height != self.height {
             return Ok(());
         }
 
         let block_hash = resp.block_hash.clone();
         info!(
-            "Overlord: state receive a verify response true, height {}, round {}, hash {:?}",
+            "Mlm: state receive a verify response true, height {}, round {}, hash {:?}",
             resp.height,
             resp.round,
             hex_encode(block_hash.clone())
@@ -347,10 +355,11 @@ where
         self.is_full_transcation
             .insert(block_hash.clone(), resp.is_pass);
 
-        if let Some(qc) =
-            self.votes
-                .get_qc_by_hash(self.height, block_hash.clone(), VoteType::Precommit)
-        {
+        if let Some(qc) = self.votes.get_qc_by_hash(
+            self.height,
+            block_hash.clone(),
+            VoteType::Precommit,
+        ) {
             self.state_machine.trigger(SMRTrigger {
                 trigger_type: TriggerType::PrecommitQC,
                 source: TriggerSource::State,
@@ -381,17 +390,21 @@ where
 
     /// On receiving a rich status will call this method. This status can be either the return value
     /// of the `commit()` interface, or lastest status after the synchronization is completed send
-    /// by the overlord handler.
+    /// by the mlm handler.
     ///
     /// If the difference between the status height and current's over one, get the last authority
     /// list of the status height firstly. Then update the height, authority_list and the block
     /// interval. Since it is possible to have received and cached the current height's proposals,
     /// votes and quorum certificates before, these should be re-checked as goto new height.
     /// Finally, trigger SMR to goto new height.
-    async fn goto_new_height(&mut self, _ctx: Context, status: Status) -> ConsensusResult<()> {
+    async fn goto_new_height(
+        &mut self,
+        _ctx: Context,
+        status: Status,
+    ) -> ConsensusResult<()> {
         if status.height <= self.height {
             warn!(
-                "Overlord: state receive an outdated status, height {}, self height {}",
+                "Mlm: state receive an outdated status, height {}, self height {}",
                 status.height, self.height
             );
             return Ok(());
@@ -405,13 +418,13 @@ where
         self.consensus_power = status.is_consensus_node(&self.address);
         if !self.consensus_power {
             info!(
-                "Overlord: self does not have consensus power height {}",
+                "Mlm: self does not have consensus power height {}",
                 new_height
             );
             return Ok(());
         }
 
-        info!("Overlord: state goto new height {}", self.height);
+        info!("Mlm: state goto new height {}", self.height);
 
         self.save_wal(Step::Propose, None).await?;
 
@@ -456,7 +469,7 @@ where
         lock_proposal: Option<Hash>,
         from_where: FromWhere,
     ) -> ConsensusResult<()> {
-        info!("Overlord: state goto new round {}", new_round);
+        info!("Mlm: state goto new round {}", new_round);
 
         if new_round != INIT_ROUND {
             let last_round = self.round;
@@ -480,7 +493,9 @@ where
         // If self is not proposer, check whether it has received current signed proposal before. If
         // has, then handle it.
         if !self.is_proposer()? {
-            if let Ok((signed_proposal, ctx)) = self.proposals.get(self.height, self.round) {
+            if let Ok((signed_proposal, ctx)) =
+                self.proposals.get(self.height, self.round)
+            {
                 return self.handle_signed_proposal(ctx, signed_proposal).await;
             }
             return Ok(());
@@ -505,20 +520,27 @@ where
                 .function
                 .get_block(ctx.clone(), self.height)
                 .await
-                .map_err(|err| ConsensusError::Other(format!("get block error {:?}", err)))?;
+                .map_err(|err| {
+                    ConsensusError::Other(format!("get block error {:?}", err))
+                })?;
             (new_block, new_hash, None)
         } else {
             let round = lock_round.unwrap();
             let hash = lock_proposal.unwrap();
             let block = self.hash_with_block.get(&hash).ok_or_else(|| {
-                ConsensusError::ProposalErr(format!("Lose whole block that hash is {:?}", hash))
+                ConsensusError::ProposalErr(format!(
+                    "Lose whole block that hash is {:?}",
+                    hash
+                ))
             })?;
 
             // Create PoLC by prevoteQC.
             let qc = self
                 .votes
                 .get_qc_by_id(self.height, round, VoteType::Prevote)
-                .map_err(|err| ConsensusError::ProposalErr(format!("{:?} when propose", err)))?;
+                .map_err(|err| {
+                    ConsensusError::ProposalErr(format!("{:?} when propose", err))
+                })?;
             let polc = PoLC {
                 lock_round: round,
                 lock_votes: qc,
@@ -540,7 +562,7 @@ where
         };
 
         info!(
-            "Overlord: state broadcast a signed proposal height {}, round {}, hash {:?} and trigger SMR",
+            "Mlm: state broadcast a signed proposal height {}, round {}, hash {:?} and trigger SMR",
             self.height,
             self.round,
             hex_encode(hash.clone())
@@ -548,7 +570,7 @@ where
 
         self.broadcast(
             Context::new(),
-            OverlordMsg::SignedProposal(self.sign_proposal(proposal)?),
+            MlmMsg::SignedProposal(self.sign_proposal(proposal)?),
         )
         .await;
 
@@ -569,7 +591,7 @@ where
     /// This function only handle signed proposals which height and round are equal to current.
     /// Others will be ignored or stored in the proposal collector.
     #[tracing_span(
-        kind = "overlord",
+        kind = "mlm",
         tags = "{
             'height': 'signed_proposal.proposal.height', 
             'round': 'signed_proposal.proposal.round'
@@ -588,7 +610,7 @@ where
         let proposal_round = signed_proposal.proposal.round;
 
         info!(
-            "Overlord: state receive a signed proposal height {}, round {}, from {:?}, hash {:?}",
+            "Mlm: state receive a signed proposal height {}, round {}, from {:?}, hash {:?}",
             proposal_height,
             proposal_round,
             hex_encode(signed_proposal.proposal.proposer.clone()),
@@ -617,7 +639,7 @@ where
         // If the signed proposal is with a lock, check the lock round and the QC then trigger it to
         // SMR. Otherwise, touch off SMR directly.
         let lock_round = if let Some(polc) = proposal.lock.clone() {
-            debug!("Overlord: state receive a signed proposal with a lock");
+            debug!("Mlm: state receive a signed proposal with a lock");
             Some(polc.lock_round)
         } else {
             None
@@ -634,7 +656,7 @@ where
         )?;
 
         info!(
-            "Overlord: state trigger SMR proposal height {}, round {}, hash {:?}",
+            "Mlm: state trigger SMR proposal height {}, round {}, hash {:?}",
             self.height,
             self.round,
             hex_encode(hash.clone())
@@ -650,7 +672,7 @@ where
             wal_info: None,
         })?;
 
-        debug!("Overlord: state check the whole block");
+        debug!("Mlm: state check the whole block");
         self.check_block(ctx, hash, block).await;
         Ok(())
     }
@@ -662,7 +684,7 @@ where
         lock_round: Option<u64>,
     ) -> ConsensusResult<()> {
         info!(
-            "Overlord: state receive {:?} vote event height {}, round {}, hash {:?}",
+            "Mlm: state receive {:?} vote event height {}, round {}, hash {:?}",
             vote_type.clone(),
             self.height,
             self.round,
@@ -688,13 +710,13 @@ where
             );
         } else {
             info!(
-                "Overlord: state transmit a signed vote, height {}, round {}, hash {:?}",
+                "Mlm: state transmit a signed vote, height {}, round {}, hash {:?}",
                 self.height,
                 self.round,
                 hex_encode(hash)
             );
 
-            self.transmit(Context::new(), OverlordMsg::SignedVote(signed_vote))
+            self.transmit(Context::new(), MlmMsg::SignedVote(signed_vote))
                 .await;
         }
 
@@ -702,7 +724,11 @@ where
         Ok(())
     }
 
-    async fn handle_brake(&mut self, round: u64, lock_round: Option<u64>) -> ConsensusResult<()> {
+    async fn handle_brake(
+        &mut self,
+        round: u64,
+        lock_round: Option<u64>,
+    ) -> ConsensusResult<()> {
         if round != self.round {
             return Err(ConsensusError::CorrectnessErr(format!(
                 "SMR round {}, state round {}",
@@ -719,7 +745,9 @@ where
         let signature = self
             .util
             .sign(self.util.hash(Bytes::from(rlp::encode(&choke.to_hash()))))
-            .map_err(|err| ConsensusError::CryptoErr(format!("sign choke error {:?}", err)))?;
+            .map_err(|err| {
+                ConsensusError::CryptoErr(format!("sign choke error {:?}", err))
+            })?;
         let signed_choke = SignedChoke {
             signature,
             choke,
@@ -727,14 +755,14 @@ where
         };
 
         info!(
-            "Overlord: state broadcast a signed brake in height {}, round {}",
+            "Mlm: state broadcast a signed brake in height {}, round {}",
             self.height, self.round
         );
 
         self.chokes.insert(self.round, signed_choke.clone());
         self.save_wal_with_lock_round(Step::Brake, lock_round)
             .await?;
-        self.broadcast(Context::new(), OverlordMsg::SignedChoke(signed_choke))
+        self.broadcast(Context::new(), MlmMsg::SignedChoke(signed_choke))
             .await;
         self.check_choke_above_threshold()?;
         Ok(())
@@ -742,13 +770,13 @@ where
 
     async fn handle_commit(&mut self, hash: Hash) -> ConsensusResult<()> {
         info!(
-            "Overlord: state receive commit event height {}, round {}, hash {:?}",
+            "Mlm: state receive commit event height {}, round {}, hash {:?}",
             self.height,
             self.round,
             hex_encode(hash.clone())
         );
 
-        debug!("Overlord: state get origin block");
+        debug!("Mlm: state get origin block");
         let height = self.height;
         let content = if let Some(tmp) = self.hash_with_block.get(&hash) {
             tmp.to_owned()
@@ -775,7 +803,7 @@ where
         });
         self.save_wal(Step::Commit, polc).await?;
 
-        debug!("Overlord: state generate proof");
+        debug!("Mlm: state generate proof");
 
         let proof = Proof {
             height,
@@ -801,7 +829,7 @@ where
         let cost = Instant::now() - self.height_start;
 
         info!(
-            "Overlord: achieve consensus in height {}, costs {} round {:?} time",
+            "Mlm: achieve consensus in height {}, costs {} round {:?} time",
             self.height,
             self.round + 1,
             cost
@@ -825,7 +853,7 @@ where
     /// the vote collector. Whenevet the current vote is received, a statistic is made to check
     /// if the sum of the voting weights corresponding to the hash exceeds the threshold.
     #[tracing_span(
-        kind = "overlord",
+        kind = "mlm",
         tags = "{
             'height': 'signed_vote.vote.height', 
             'round': 'signed_vote.vote.round', 
@@ -850,7 +878,7 @@ where
         };
 
         info!(
-            "Overlord: state receive a signed {:?} vote height {}, round {}, from {:?}, hash {:?}",
+            "Mlm: state receive a signed {:?} vote height {}, round {}, from {:?}, hash {:?}",
             vote_type,
             height,
             round,
@@ -894,7 +922,7 @@ where
 
         let block_hash = self.counting_vote(vote_type.clone())?;
         if block_hash.is_none() {
-            debug!("Overlord: state counting of vote and no one above threshold");
+            debug!("Mlm: state counting of vote and no one above threshold");
             return Ok(());
         }
 
@@ -904,21 +932,21 @@ where
         let qc = self.generate_qc(block_hash.clone(), vote_type.clone())?;
 
         debug!(
-            "Overlord: state set QC height {}, round {}",
+            "Mlm: state set QC height {}, round {}",
             self.height, self.round
         );
 
         self.votes.set_qc(qc.clone());
 
         info!(
-            "Overlord: state broadcast a {:?} QC, height {}, round {}, hash {:?}",
+            "Mlm: state broadcast a {:?} QC, height {}, round {}, hash {:?}",
             vote_type,
             qc.height,
             qc.round,
             hex_encode(block_hash.clone())
         );
 
-        self.broadcast(ctx, OverlordMsg::AggregatedVote(qc.clone()))
+        self.broadcast(ctx, MlmMsg::AggregatedVote(qc.clone()))
             .await;
 
         if !self.try_get_full_txs(&block_hash) {
@@ -926,7 +954,7 @@ where
         }
 
         info!(
-            "Overlord: state trigger SMR {:?} QC height {}, round {}, hash {:?}",
+            "Mlm: state trigger SMR {:?} QC height {}, round {}, hash {:?}",
             vote_type,
             self.height,
             self.round,
@@ -960,7 +988,7 @@ where
     ///
     /// 4. Other cases, return `Ok(())` directly.
     #[tracing_span(
-        kind = "overlord",
+        kind = "mlm",
         tags = "{
             'height': 'aggregated_vote.height', 
             'round': 'aggregated_vote.round', 
@@ -985,7 +1013,7 @@ where
         };
 
         info!(
-            "Overlord: state receive an {:?} QC height {}, round {}, from {:?}, hash {:?}",
+            "Mlm: state receive an {:?} QC height {}, round {}, from {:?}, hash {:?}",
             qc_type,
             vote_height,
             vote_round,
@@ -998,21 +1026,23 @@ where
         match vote_height.cmp(&self.height) {
             Ordering::Less => {
                 debug!(
-                    "Overlord: state receive an outdated QC, height {}, round {}",
+                    "Mlm: state receive an outdated QC, height {}, round {}",
                     vote_height, vote_round,
                 );
                 return Ok(());
             }
 
             Ordering::Greater => {
-                if self.height + FUTURE_HEIGHT_GAP > vote_height && vote_round < FUTURE_ROUND_GAP {
+                if self.height + FUTURE_HEIGHT_GAP > vote_height
+                    && vote_round < FUTURE_ROUND_GAP
+                {
                     debug!(
-                        "Overlord: state receive a future QC, height {}, round {}",
+                        "Mlm: state receive a future QC, height {}, round {}",
                         vote_height, vote_round,
                     );
                     self.votes.set_qc(aggregated_vote);
                 } else {
-                    warn!("Overlord: state receive a much higher aggregated vote");
+                    warn!("Mlm: state receive a much higher aggregated vote");
                 }
                 return Ok(());
             }
@@ -1022,7 +1052,7 @@ where
 
         // State do not handle outdated prevote QC.
         if qc_type == VoteType::Prevote && vote_round < self.round {
-            debug!("Overlord: state receive a outdated prevote qc.");
+            debug!("Mlm: state receive a outdated prevote qc.");
             return Ok(());
         } else if qc_type == VoteType::Precommit
             && aggregated_vote.block_hash.is_empty()
@@ -1040,7 +1070,7 @@ where
         }
 
         info!(
-            "Overlord: state trigger SMR {:?} QC height {}, round {}, hash {:?}",
+            "Mlm: state trigger SMR {:?} QC height {}, round {}, hash {:?}",
             qc_type,
             self.height,
             self.round,
@@ -1067,9 +1097,9 @@ where
     /// should be the same as the handle signed vote.
     async fn vote_process(&mut self, vote_type: VoteType) -> ConsensusResult<()> {
         if !self.is_leader {
-            if let Ok(qc) = self
-                .votes
-                .get_qc_by_id(self.height, self.round, vote_type.clone())
+            if let Ok(qc) =
+                self.votes
+                    .get_qc_by_id(self.height, self.round, vote_type.clone())
             {
                 let block_hash = qc.block_hash.clone();
                 if !self.try_get_full_txs(&block_hash) {
@@ -1077,7 +1107,7 @@ where
                 }
 
                 info!(
-                    "Overlord: state trigger SMR height {}, round {}, type {:?}, hash {:?}",
+                    "Mlm: state trigger SMR height {}, round {}, type {:?}, hash {:?}",
                     self.height,
                     self.round,
                     qc.vote_type,
@@ -1100,14 +1130,14 @@ where
             self.votes.set_qc(qc.clone());
 
             info!(
-                "Overlord: state broadcast a {:?} QC, height {}, round {}, hash {:?}",
+                "Mlm: state broadcast a {:?} QC, height {}, round {}, hash {:?}",
                 vote_type,
                 qc.height,
                 qc.round,
                 hex_encode(block_hash.clone())
             );
 
-            self.broadcast(Context::new(), OverlordMsg::AggregatedVote(qc))
+            self.broadcast(Context::new(), MlmMsg::AggregatedVote(qc))
                 .await;
 
             if !self.try_get_full_txs(&block_hash) {
@@ -1115,7 +1145,7 @@ where
             }
 
             info!(
-                "Overlord: state trigger SMR {:?} QC height {}, round {}, hash {:?}",
+                "Mlm: state trigger SMR {:?} QC height {}, round {}, hash {:?}",
                 vote_type,
                 self.height,
                 self.round,
@@ -1139,13 +1169,13 @@ where
         let len = self
             .votes
             .vote_count(self.height, self.round, vote_type.clone());
-        let vote_map = self
-            .votes
-            .get_vote_map(self.height, self.round, vote_type.clone())?;
+        let vote_map =
+            self.votes
+                .get_vote_map(self.height, self.round, vote_type.clone())?;
         let threshold = self.authority.get_vote_weight_sum() * 2;
 
         info!(
-            "Overlord: state round {}, {:?} vote pool length {}",
+            "Mlm: state round {}, {:?} vote pool length {}",
             self.round, vote_type, len
         );
 
@@ -1162,7 +1192,7 @@ where
     }
 
     #[tracing_span(
-        kind = "overlord",
+        kind = "mlm",
         tags = "{
             'height': 'signed_choke.choke.height',
             'round': 'signed_choke.choke.round'
@@ -1188,7 +1218,7 @@ where
         }
 
         info!(
-            "Overlord: state receive a choke of height {}, round {}, from {:?}",
+            "Mlm: state receive a choke of height {}, round {}, from {:?}",
             choke_height,
             choke_round,
             hex_encode(signed_choke.address.clone())
@@ -1197,10 +1227,10 @@ where
         if choke_round > self.round {
             match choke.from {
                 UpdateFrom::PrevoteQC(qc) => {
-                    return self.handle_aggregated_vote(ctx.clone(), qc).await
+                    return self.handle_aggregated_vote(ctx.clone(), qc).await;
                 }
                 UpdateFrom::PrecommitQC(qc) => {
-                    return self.handle_aggregated_vote(ctx.clone(), qc).await
+                    return self.handle_aggregated_vote(ctx.clone(), qc).await;
                 }
                 UpdateFrom::ChokeQC(qc) => return self.handle_aggregated_choke(qc),
             }
@@ -1250,7 +1280,7 @@ where
             .collect::<Vec<_>>();
         votes.sort();
 
-        debug!("Overlord: state build aggregated signature");
+        debug!("Mlm: state build aggregated signature");
 
         let len = votes.len();
         let mut signatures = Vec::with_capacity(len);
@@ -1287,12 +1317,12 @@ where
         &mut self,
         proposals_and_ctxs: Vec<(SignedProposal<T>, Context)>,
     ) -> ConsensusResult<()> {
-        debug!("Overlord: state re-check future signed proposals");
+        debug!("Mlm: state re-check future signed proposals");
 
         for item in proposals_and_ctxs.into_iter() {
             parallel_verify(
                 item.1,
-                OverlordMsg::SignedProposal(item.0),
+                MlmMsg::SignedProposal(item.0),
                 Arc::clone(&self.util),
                 self.authority.clone(),
                 self.verify_sig_tx.clone(),
@@ -1307,12 +1337,12 @@ where
         &mut self,
         votes_and_ctxs: Vec<(SignedVote, Context)>,
     ) -> ConsensusResult<()> {
-        debug!("Overlord: state re-check future signed votes");
+        debug!("Mlm: state re-check future signed votes");
 
         for item in votes_and_ctxs.into_iter() {
             parallel_verify(
                 item.1,
-                OverlordMsg::SignedVote(item.0),
+                MlmMsg::SignedVote(item.0),
                 Arc::clone(&self.util),
                 self.authority.clone(),
                 self.verify_sig_tx.clone(),
@@ -1324,12 +1354,12 @@ where
     }
 
     async fn re_check_qcs(&mut self, qcs: Vec<AggregatedVote>) -> ConsensusResult<()> {
-        debug!("Overlord: state re-check future QCs");
+        debug!("Mlm: state re-check future QCs");
 
         for item in qcs.into_iter() {
             parallel_verify(
                 Context::new(),
-                OverlordMsg::AggregatedVote(item),
+                MlmMsg::AggregatedVote(item),
                 Arc::clone(&self.util),
                 self.authority.clone(),
                 self.verify_sig_tx.clone(),
@@ -1347,7 +1377,7 @@ where
 
         if proposer == self.address {
             info!(
-                "Overlord: state self become leader, height {}, round {}",
+                "Mlm: state self become leader, height {}, round {}",
                 self.height, self.round
             );
             self.is_leader = true;
@@ -1356,7 +1386,7 @@ where
         }
 
         info!(
-            "Overlord: {:?} become leader, height {}, round {}",
+            "Mlm: {:?} become leader, height {}, round {}",
             hex_encode(proposer.clone()),
             self.height,
             self.round
@@ -1371,8 +1401,11 @@ where
         Ok(self.address == proposer)
     }
 
-    fn sign_proposal(&self, proposal: Proposal<T>) -> ConsensusResult<SignedProposal<T>> {
-        debug!("Overlord: state sign a proposal");
+    fn sign_proposal(
+        &self,
+        proposal: Proposal<T>,
+    ) -> ConsensusResult<SignedProposal<T>> {
+        debug!("Mlm: state sign a proposal");
         let signature = self
             .util
             .sign(self.util.hash(Bytes::from(rlp::encode(&proposal))))
@@ -1385,7 +1418,7 @@ where
     }
 
     fn sign_vote(&self, vote: Vote) -> ConsensusResult<SignedVote> {
-        debug!("Overlord: state sign a vote");
+        debug!("Mlm: state sign a vote");
         let signature = self
             .util
             .sign(self.util.hash(Bytes::from(rlp::encode(&vote))))
@@ -1409,7 +1442,7 @@ where
             .collect::<Vec<_>>();
 
         info!(
-            "Overlord: state aggregate signatures height {}, round {}, voters {:?}",
+            "Mlm: state aggregate signatures height {}, round {}, voters {:?}",
             self.height, self.round, pretty_voter
         );
 
@@ -1420,8 +1453,13 @@ where
         Ok(signature)
     }
 
-    fn verify_proposer(&self, height: u64, round: u64, address: &Address) -> ConsensusResult<()> {
-        debug!("Overlord: state verify a proposer");
+    fn verify_proposer(
+        &self,
+        height: u64,
+        round: u64,
+        address: &Address,
+    ) -> ConsensusResult<()> {
+        debug!("Mlm: state verify a proposer");
         self.verify_address(address)?;
         if address != &self.authority.get_proposer(height, round)? {
             return Err(ConsensusError::ProposalErr("Invalid proposer".to_string()));
@@ -1437,9 +1475,9 @@ where
         Ok(())
     }
 
-    async fn transmit(&self, ctx: Context, msg: OverlordMsg<T>) {
+    async fn transmit(&self, ctx: Context, msg: MlmMsg<T>) {
         debug!(
-            "Overlord: state transmit a message to leader height {}, round {}",
+            "Mlm: state transmit a message to leader height {}, round {}",
             self.height, self.round
         );
 
@@ -1448,16 +1486,13 @@ where
             .transmit_to_relayer(ctx, self.leader_address.clone(), msg.clone())
             .await
             .map_err(|err| {
-                error!(
-                    "Overlord: state transmit message to leader failed {:?}",
-                    err
-                );
+                error!("Mlm: state transmit message to leader failed {:?}", err);
             });
     }
 
-    async fn broadcast(&self, ctx: Context, msg: OverlordMsg<T>) {
+    async fn broadcast(&self, ctx: Context, msg: MlmMsg<T>) {
         debug!(
-            "Overlord: state broadcast a message to others height {}, round {}",
+            "Mlm: state broadcast a message to others height {}, round {}",
             self.height, self.round
         );
 
@@ -1466,7 +1501,7 @@ where
             .broadcast_to_other(ctx, msg.clone())
             .await
             .map_err(|err| {
-                error!("Overlord: state broadcast message failed {:?}", err);
+                error!("Mlm: state broadcast message failed {:?}", err);
             });
     }
 
@@ -1479,7 +1514,11 @@ where
             .report_view_change(Context::new(), self.height, round, reason)
     }
 
-    fn view_change_reason(&mut self, round: u64, update_from: &FromWhere) -> ViewChangeReason {
+    fn view_change_reason(
+        &mut self,
+        round: u64,
+        update_from: &FromWhere,
+    ) -> ViewChangeReason {
         if round != update_from.get_round() {
             return update_from.to_reason(round);
         }
@@ -1490,10 +1529,14 @@ where
         if self.is_leader {
             if let Ok(qc) = self.votes.get_qc_by_id(height, round, VoteType::Prevote) {
                 if !qc.block_hash.is_empty() {
-                    return ViewChangeReason::LeaderReceivedVoteBelowThreshold(VoteType::Precommit);
+                    return ViewChangeReason::LeaderReceivedVoteBelowThreshold(
+                        VoteType::Precommit,
+                    );
                 }
             }
-            return ViewChangeReason::LeaderReceivedVoteBelowThreshold(VoteType::Prevote);
+            return ViewChangeReason::LeaderReceivedVoteBelowThreshold(
+                VoteType::Prevote,
+            );
         }
 
         // Replica condition
@@ -1532,12 +1575,13 @@ where
 
     fn check_choke_above_threshold(&mut self) -> ConsensusResult<()> {
         self.chokes.print_round_choke_log(self.round);
-        if let Some(round) = self.chokes.max_round_above_threshold(self.authority.len()) {
+        if let Some(round) = self.chokes.max_round_above_threshold(self.authority.len())
+        {
             if round < self.round {
                 return Ok(());
             }
 
-            info!("Overlord: round {} chokes above threshold", round);
+            info!("Mlm: round {} chokes above threshold", round);
 
             // aggregate chokes.
             let signed_chokes = self.chokes.get_chokes(round).unwrap();
@@ -1559,7 +1603,7 @@ where
             );
 
             info!(
-                "Overlord: state trigger SMR go on {} round of height {}",
+                "Mlm: state trigger SMR go on {} round of height {}",
                 round + 1,
                 self.height
             );
@@ -1578,7 +1622,7 @@ where
     }
 
     #[tracing_span(
-        kind = "overlord",
+        kind = "mlm",
         tags = "{'height': 'self.height', 'round': 'self.round'}"
     )]
     async fn check_block(&mut self, ctx: Context, hash: Hash, block: T) {
@@ -1588,16 +1632,27 @@ where
         let resp_tx = self.resp_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                check_current_block(ctx, function, height, round, hash.clone(), block, resp_tx)
-                    .await
+            if let Err(e) = check_current_block(
+                ctx,
+                function,
+                height,
+                round,
+                hash.clone(),
+                block,
+                resp_tx,
+            )
+            .await
             {
-                error!("Overlord: state check block failed: {:?}", e);
+                error!("Mlm: state check block failed: {:?}", e);
             }
         });
     }
 
-    async fn save_wal(&mut self, step: Step, lock: Option<WalLock<T>>) -> ConsensusResult<()> {
+    async fn save_wal(
+        &mut self,
+        step: Step,
+        lock: Option<WalLock<T>>,
+    ) -> ConsensusResult<()> {
         let wal_info = WalInfo {
             height: self.height,
             round: self.round,
@@ -1610,7 +1665,7 @@ where
             .save(Bytes::from(rlp::encode(&wal_info)))
             .await
             .map_err(|e| {
-                error!("Overlord: state save wal error {:?}", e);
+                error!("Mlm: state save wal error {:?}", e);
                 ConsensusError::SaveWalErr {
                     height: self.height,
                     round: self.round,
@@ -1626,14 +1681,14 @@ where
         lock_round: Option<u64>,
     ) -> ConsensusResult<()> {
         let polc = if let Some(round) = lock_round {
-            if let Ok(qc) = self
-                .votes
-                .get_qc_by_id(self.height, round, VoteType::Prevote)
+            if let Ok(qc) =
+                self.votes
+                    .get_qc_by_id(self.height, round, VoteType::Prevote)
             {
-                let block = self
-                    .hash_with_block
-                    .get(&qc.block_hash)
-                    .ok_or_else(|| ConsensusError::Other("lose whole block".to_string()))?;
+                let block =
+                    self.hash_with_block.get(&qc.block_hash).ok_or_else(|| {
+                        ConsensusError::Other("lose whole block".to_string())
+                    })?;
 
                 Some(WalLock {
                     lock_round: round,
@@ -1685,7 +1740,7 @@ where
         }
 
         let wal_info = wal_info.unwrap();
-        info!("overlord: start from wal {}", wal_info);
+        info!("mlm: start from wal {}", wal_info);
 
         // recover basic state
         self.height = wal_info.height;
@@ -1702,10 +1757,9 @@ where
         }
 
         if wal_info.step == Step::Commit {
-            let qc = wal_info
-                .lock
-                .clone()
-                .ok_or_else(|| ConsensusError::LoadWalErr("no lock in commit step".to_string()))?;
+            let qc = wal_info.lock.clone().ok_or_else(|| {
+                ConsensusError::LoadWalErr("no lock in commit step".to_string())
+            })?;
             return self.handle_commit(qc.lock_votes.block_hash.clone()).await;
         }
 
@@ -1744,7 +1798,7 @@ where
 
     /// When block hash is empty, return true directly.
     fn try_get_full_txs(&self, hash: &Hash) -> bool {
-        debug!("Overlord: state check if get full transcations");
+        debug!("Mlm: state check if get full transcations");
         if hash.is_empty() {
             return true;
         } else if let Some(res) = self.is_full_transcation.get(hash) {
@@ -1756,9 +1810,9 @@ where
     fn set_update_from(&mut self, from_where: FromWhere) -> ConsensusResult<()> {
         let update_from = match from_where {
             FromWhere::PrevoteQC(round) => {
-                let qc = self
-                    .votes
-                    .get_qc_by_id(self.height, round, VoteType::Prevote)?;
+                let qc =
+                    self.votes
+                        .get_qc_by_id(self.height, round, VoteType::Prevote)?;
                 UpdateFrom::PrevoteQC(qc)
             }
 
@@ -1806,7 +1860,7 @@ where
         // until that height.
         if (height == self.height && round != self.round) || height > self.height {
             debug!(
-                "Overlord: state receive a future signed proposal, height {}, round {}",
+                "Mlm: state receive a future signed proposal, height {}, round {}",
                 height, round,
             );
             self.proposals
@@ -1819,20 +1873,20 @@ where
     fn filter_message(&self, height: u64, round: u64) -> bool {
         if height < self.height || (height == self.height && round < self.round) {
             debug!(
-                "Overlord: state receive an outdated message height {}, self height {}",
+                "Mlm: state receive an outdated message height {}, self height {}",
                 height, self.height
             );
             return true;
         } else if self.height + FUTURE_HEIGHT_GAP < height {
             debug!(
-                "Overlord: state receive a future message height {}, self height {}",
+                "Mlm: state receive a future message height {}, self height {}",
                 height, self.height
             );
             return true;
         } else if (height == self.height && self.round + FUTURE_ROUND_GAP < round)
             || (height > self.height && round > FUTURE_ROUND_GAP)
         {
-            debug!("Overlord: state receive a much higher round message");
+            debug!("Mlm: state receive a much higher round message");
             return true;
         }
 
@@ -1840,7 +1894,7 @@ where
     }
 }
 
-#[tracing_span(kind = "overlord", tags = "{'height': 'height', 'round': 'round'}")]
+#[tracing_span(kind = "mlm", tags = "{'height': 'height', 'round': 'round'}")]
 async fn check_current_block<U: Consensus<T>, T: Codec>(
     ctx: Context,
     function: Arc<U>,
@@ -1853,9 +1907,11 @@ async fn check_current_block<U: Consensus<T>, T: Codec>(
     function
         .check_block(ctx, height, hash.clone(), block)
         .await
-        .map_err(|err| ConsensusError::Other(format!("check {} block error {:?}", height, err)))?;
+        .map_err(|err| {
+            ConsensusError::Other(format!("check {} block error {:?}", height, err))
+        })?;
 
-    debug!("Overlord: state check block {}", true);
+    debug!("Mlm: state check block {}", true);
     tx.unbounded_send(VerifyResp {
         height,
         round,

@@ -16,9 +16,9 @@ use lazy_static::lazy_static;
 use rand::random;
 use serde::{Deserialize, Serialize};
 
-use overlord::error::ConsensusError;
-use overlord::types::{Commit, Hash, Node, OverlordMsg, Status, ViewChangeReason};
-use overlord::{Codec, Consensus, Crypto, DurationConfig, Overlord, OverlordHandler, Wal};
+use mlm::error::ConsensusError;
+use mlm::types::{Commit, Hash, MlmMsg, Node, Status, ViewChangeReason};
+use mlm::{Codec, Consensus, Crypto, DurationConfig, Mlm, MlmHandler, Wal};
 
 lazy_static! {
     static ref HASHER_INST: HasherKeccak = HasherKeccak::new();
@@ -28,7 +28,7 @@ const SPEAKER_NUM: u8 = 10;
 
 const SPEECH_INTERVAL: u64 = 1000; // ms
 
-type Channel = (Sender<OverlordMsg<Speech>>, Receiver<OverlordMsg<Speech>>);
+type Channel = (Sender<MlmMsg<Speech>>, Receiver<MlmMsg<Speech>>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct Speech {
@@ -137,16 +137,16 @@ impl Crypto for MockCrypto {
 
 struct Brain {
     speaker_list: Vec<Node>,
-    talk_to: HashMap<Bytes, Sender<OverlordMsg<Speech>>>,
-    hearing: Receiver<OverlordMsg<Speech>>,
+    talk_to: HashMap<Bytes, Sender<MlmMsg<Speech>>>,
+    hearing: Receiver<MlmMsg<Speech>>,
     consensus_speech: Arc<Mutex<HashMap<u64, Bytes>>>,
 }
 
 impl Brain {
     fn new(
         speaker_list: Vec<Node>,
-        talk_to: HashMap<Bytes, Sender<OverlordMsg<Speech>>>,
-        hearing: Receiver<OverlordMsg<Speech>>,
+        talk_to: HashMap<Bytes, Sender<MlmMsg<Speech>>>,
+        hearing: Receiver<MlmMsg<Speech>>,
         consensus_speech: Arc<Mutex<HashMap<u64, Bytes>>>,
     ) -> Brain {
         Brain {
@@ -216,7 +216,7 @@ impl Consensus<Speech> for Brain {
     async fn broadcast_to_other(
         &self,
         _ctx: Context,
-        words: OverlordMsg<Speech>,
+        words: MlmMsg<Speech>,
     ) -> Result<(), Box<dyn Error + Send>> {
         self.talk_to.iter().for_each(|(_, mouth)| {
             mouth.send(words.clone()).unwrap();
@@ -228,7 +228,7 @@ impl Consensus<Speech> for Brain {
         &self,
         _ctx: Context,
         name: Bytes,
-        words: OverlordMsg<Speech>,
+        words: MlmMsg<Speech>,
     ) -> Result<(), Box<dyn Error + Send>> {
         self.talk_to.get(&name).unwrap().send(words).unwrap();
         Ok(())
@@ -247,8 +247,8 @@ impl Consensus<Speech> for Brain {
 }
 
 struct Speaker {
-    overlord: Arc<Overlord<Speech, Brain, MockCrypto, MockWal>>,
-    handler: OverlordHandler<Speech>,
+    mlm: Arc<Mlm<Speech, Brain, MockCrypto, MockWal>>,
+    handler: MlmHandler<Speech>,
     brain: Arc<Brain>,
 }
 
@@ -256,8 +256,8 @@ impl Speaker {
     fn new(
         name: Bytes,
         speaker_list: Vec<Node>,
-        talk_to: HashMap<Bytes, Sender<OverlordMsg<Speech>>>,
-        hearing: Receiver<OverlordMsg<Speech>>,
+        talk_to: HashMap<Bytes, Sender<MlmMsg<Speech>>>,
+        hearing: Receiver<MlmMsg<Speech>>,
         consensus_speech: Arc<Mutex<HashMap<u64, Bytes>>>,
     ) -> Self {
         let crypto = MockCrypto::new(name.clone());
@@ -267,18 +267,18 @@ impl Speaker {
             hearing,
             consensus_speech,
         ));
-        let overlord = Overlord::new(
+        let mlm = Mlm::new(
             name,
             Arc::clone(&brain),
             Arc::new(crypto),
             Arc::new(MockWal::new()),
         );
-        let overlord_handler = overlord.get_handler();
+        let mlm_handler = mlm.get_handler();
 
-        overlord_handler
+        mlm_handler
             .send_msg(
                 Context::new(),
-                OverlordMsg::RichStatus(Status {
+                MlmMsg::RichStatus(Status {
                     height: 1,
                     interval: Some(SPEECH_INTERVAL),
                     timer_config: None,
@@ -288,8 +288,8 @@ impl Speaker {
             .unwrap();
 
         Self {
-            overlord: Arc::new(overlord),
-            handler: overlord_handler,
+            mlm: Arc::new(mlm),
+            handler: mlm_handler,
             brain,
         }
     }
@@ -303,35 +303,43 @@ impl Speaker {
         let brain = Arc::<Brain>::clone(&self.brain);
         let handler = self.handler.clone();
 
-        thread::spawn(move || loop {
-            if let Ok(msg) = brain.hearing.recv() {
-                match msg {
-                    OverlordMsg::SignedVote(vote) => {
-                        handler
-                            .send_msg(Context::new(), OverlordMsg::SignedVote(vote))
-                            .unwrap();
+        thread::spawn(move || {
+            loop {
+                if let Ok(msg) = brain.hearing.recv() {
+                    match msg {
+                        MlmMsg::SignedVote(vote) => {
+                            handler
+                                .send_msg(Context::new(), MlmMsg::SignedVote(vote))
+                                .unwrap();
+                        }
+                        MlmMsg::SignedProposal(proposal) => {
+                            handler
+                                .send_msg(
+                                    Context::new(),
+                                    MlmMsg::SignedProposal(proposal),
+                                )
+                                .unwrap();
+                        }
+                        MlmMsg::AggregatedVote(agg_vote) => {
+                            handler
+                                .send_msg(
+                                    Context::new(),
+                                    MlmMsg::AggregatedVote(agg_vote),
+                                )
+                                .unwrap();
+                        }
+                        MlmMsg::SignedChoke(choke) => {
+                            handler
+                                .send_msg(Context::new(), MlmMsg::SignedChoke(choke))
+                                .unwrap();
+                        }
+                        _ => {}
                     }
-                    OverlordMsg::SignedProposal(proposal) => {
-                        handler
-                            .send_msg(Context::new(), OverlordMsg::SignedProposal(proposal))
-                            .unwrap();
-                    }
-                    OverlordMsg::AggregatedVote(agg_vote) => {
-                        handler
-                            .send_msg(Context::new(), OverlordMsg::AggregatedVote(agg_vote))
-                            .unwrap();
-                    }
-                    OverlordMsg::SignedChoke(choke) => {
-                        handler
-                            .send_msg(Context::new(), OverlordMsg::SignedChoke(choke))
-                            .unwrap();
-                    }
-                    _ => {}
                 }
             }
         });
 
-        self.overlord
+        self.mlm
             .run(0, interval, speaker_list, timer_config)
             .await
             .unwrap();
@@ -346,7 +354,7 @@ async fn main() {
         .map(|_| Node::new(gen_random_bytes()))
         .collect();
     let channels: Vec<Channel> = (0..SPEAKER_NUM).map(|_| unbounded()).collect();
-    let hearings: HashMap<Bytes, Receiver<OverlordMsg<Speech>>> = speaker_list
+    let hearings: HashMap<Bytes, Receiver<MlmMsg<Speech>>> = speaker_list
         .iter()
         .map(|node| node.address.clone())
         .zip(channels.iter().map(|(_, receiver)| receiver.clone()))
@@ -358,7 +366,7 @@ async fn main() {
 
     for speaker in speaker_list.iter() {
         let name = speaker.address.clone();
-        let mut talk_to: HashMap<Bytes, Sender<OverlordMsg<Speech>>> = speaker_list_clone
+        let mut talk_to: HashMap<Bytes, Sender<MlmMsg<Speech>>> = speaker_list_clone
             .iter()
             .map(|speaker| speaker.address.clone())
             .zip(channels.iter().map(|(sender, _)| sender.clone()))
